@@ -1,0 +1,164 @@
+name: Build downloadable apps
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: downloadable-apps-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-x86_64
+            executable: fish-s2pro-tts.exe
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+            executable: fish-s2pro-tts
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev pkg-config libssl-dev
+      - name: Test
+        run: cargo test --locked
+      - name: Build optimized executable
+        run: cargo build --release --locked
+      - name: Package executable and instructions
+        shell: python {0}
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          EXECUTABLE: ${{ matrix.executable }}
+        run: |
+          import hashlib
+          import os
+          import pathlib
+          import shutil
+          import tarfile
+          import zipfile
+
+          name = "fish-s2pro-tts-" + os.environ["PLATFORM"]
+          root = pathlib.Path("package") / name
+          root.mkdir(parents=True)
+          source = pathlib.Path("target/release") / os.environ["EXECUTABLE"]
+          if not source.is_file():
+              raise SystemExit("Expected executable is missing: " + str(source))
+          shutil.copy2(source, root / source.name)
+          shutil.copy2("README.md", root / "README.md")
+          (root / "BUILD.txt").write_text(
+              "Commit: " + os.environ["GITHUB_SHA"] + "\n"
+              + "Platform: " + os.environ["PLATFORM"] + "\n",
+              encoding="utf-8"
+          )
+          if os.environ["PLATFORM"].startswith("windows"):
+              (root / "start.cmd").write_bytes(
+                  b'@echo off\r\ncd /d "%~dp0"\r\nstart "" "%~dp0fish-s2pro-tts.exe"\r\n'
+              )
+          else:
+              launcher = root / "start.sh"
+              launcher.write_text(
+                  '#!/bin/sh\ncd -- "$(dirname -- "$0")" || exit 1\nexec ./fish-s2pro-tts "$@"\n',
+                  encoding="utf-8"
+              )
+              launcher.chmod(0o755)
+              (root / source.name).chmod(0o755)
+          dist = pathlib.Path("dist")
+          dist.mkdir()
+          if os.environ["PLATFORM"].startswith("windows"):
+              archive = dist / (name + ".zip")
+              with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
+                  for item in root.iterdir():
+                      bundle.write(item, pathlib.Path(name) / item.name)
+          else:
+              archive = dist / (name + ".tar.gz")
+              with tarfile.open(archive, "w:gz") as bundle:
+                  bundle.add(root, arcname=name)
+          digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+          (dist / (archive.name + ".sha256")).write_text(
+              digest + "  " + archive.name + "\n", encoding="ascii"
+          )
+      - name: Upload downloadable package
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+      - name: Publish tested binaries
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
+            latest_sha="$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq .object.sha)"
+            if [[ "$latest_sha" != "$GITHUB_SHA" ]]; then
+              echo "A newer main commit exists; skipping outdated preview publication."
+              exit 0
+            fi
+            release_tag="preview"
+            title="Latest development build"
+            flags=(--prerelease --latest=false)
+          else
+            release_tag="$REF_NAME"
+            title="$REF_NAME"
+            flags=()
+            if [[ "$release_tag" == *-* ]]; then
+              flags=(--prerelease --latest=false)
+            fi
+          fi
+          {
+            echo "Windows x86_64 and Linux x86_64 desktop builds."
+            echo
+            echo "Source commit: $GITHUB_SHA"
+            echo
+            echo "Windows: extract the ZIP and run start.cmd."
+            echo "Linux: extract the tar.gz and run ./start.sh in a desktop session."
+            echo "Linux requires compatible system libraries (built on Ubuntu 22.04)."
+            echo
+            echo "Packages contain BUILD.txt; SHA-256 checksum files are attached."
+            echo "Timeline project save/reopen is not implemented. Export WAV before closing."
+            echo "These binaries are not code-signed; live TTS and audio-device testing remain manual."
+          } > release-notes.md
+          if gh release view "$release_tag" > /dev/null 2>&1; then
+            if [[ "$release_tag" == "preview" ]]; then
+              gh api --method PATCH "repos/$GH_REPO/git/refs/tags/preview" -f sha="$GITHUB_SHA" -F force=true
+            fi
+            gh release edit "$release_tag" --title "$title" --notes-file release-notes.md
+            gh release upload "$release_tag" dist/* --clobber
+          else
+            gh release create "$release_tag" dist/* --target "$GITHUB_SHA" --title "$title" --notes-file release-notes.md "${flags[@]}"
+          fi
