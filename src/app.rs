@@ -85,7 +85,7 @@ pub struct FishTtsApp {
     // 輸入區
     input_text: String,
     previous_text: Option<String>,
-    single_result: Option<(Vec<u8>, String, String)>,
+    single_result: Option<(Vec<u8>, String, String, Option<String>)>,
     selected_character_idx: usize,
     auto_apply_character_tag: bool,
     selected_model: String,
@@ -214,7 +214,7 @@ impl FishTtsApp {
 
     /// 將當前 Single TTS 產生的語音傳送至時間軸
     pub fn send_current_audio_to_timeline(&mut self) {
-        if let Some((bytes, char_name, text)) = self.single_result.clone() {
+        if let Some((bytes, char_name, text, voice_id)) = self.single_result.clone() {
             let clip_id = self.timeline.next_clip_id;
             self.timeline.next_clip_id += 1;
             let target_track = self.timeline.ensure_dialogue_track();
@@ -231,7 +231,8 @@ impl FishTtsApp {
                 None,
                 color,
             ) {
-                Ok(clip) => {
+                Ok(mut clip) => {
+                    clip.voice_id = voice_id;
                     self.timeline.clips.push(clip);
                     self.timeline.selected_clip_id = Some(clip_id);
                     self.active_tab = AppTab::Timeline;
@@ -309,7 +310,7 @@ impl FishTtsApp {
             let (track_id, spk_name, badge_color) = speaker_to_track
                 .get(&line.speaker_id)
                 .cloned()
-                .unwrap_or_else(|| (0, format!("Speaker {}", line.speaker_id), [59, 130, 246]));
+                .unwrap_or_else(|| (self.timeline.ensure_dialogue_track(), format!("Speaker {}", line.speaker_id), [59, 130, 246]));
 
             let clip_id = self.timeline.next_clip_id;
             self.timeline.next_clip_id += 1;
@@ -319,7 +320,7 @@ impl FishTtsApp {
                 // 回退至草稿 / 占位片段
                 let char_count = line.text.chars().count();
                 let dur = (char_count as f32 * 0.22).max(1.2);
-                let clip = TimelineClip::new_mock(
+                let mut clip = TimelineClip::new_mock(
                     clip_id,
                     track_id,
                     clip_name,
@@ -329,8 +330,17 @@ impl FishTtsApp {
                     dur,
                     badge_color,
                 );
+                if let Some(member) = cast.iter().find(|m| m.speaker_id == line.speaker_id) {
+                    clip.voice_id = member.custom_voice_id.clone();
+                    clip.prompt_tag = Some(member.prompt_tag.clone());
+                    clip.speed = member.speed.clamp(0.5, 2.0);
+                    let tone = if line.tone.trim().is_empty() { &member.default_tone } else { &line.tone };
+                    clip.text = format!("{} {}", tone.trim(), line.text.trim()).trim().to_string();
+                    clip.recalculate_duration();
+                }
+                let placed_duration = clip.duration_sec;
                 self.timeline.clips.push(clip);
-                curr_sec += dur + (line.pause_after_ms as f32 / 1000.0);
+                curr_sec += placed_duration + (line.pause_after_ms as f32 / 1000.0);
             }
         }
 
@@ -640,7 +650,7 @@ impl FishTtsApp {
                             self.multi_speech.success_toast =
                                 Some("語音合成完成！".to_string());
                             if was_single {
-                                self.single_result = Some((bytes.clone(), character_name.clone(), req.input.clone()));
+                                self.single_result = Some((bytes.clone(), character_name.clone(), req.input.clone(), req.voice.clone()));
                             }
                             if was_multi {
                                 self.multi_speech.last_generated_bytes = Some(bytes.clone());
@@ -711,6 +721,7 @@ impl Default for FishTtsApp {
 impl eframe::App for FishTtsApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_async_messages();
+        self.timeline.external_generation_busy = self.is_generating || self.multi_speech.is_generating;
         self.timeline.poll_worker_messages();
         if self.active_tab != AppTab::Timeline && self.timeline.is_playing {
             self.timeline.pause_playback(&mut self.audio_player);
@@ -1759,7 +1770,7 @@ mod tests {
     fn timeline_transfer_uses_generated_single_snapshot_not_shared_playback() {
         let mut app = FishTtsApp::new_headless();
         let original = crate::audio::encode_pcm_to_wav(&[100; 800], 8000, 1);
-        app.single_result = Some((original.clone(), "原角色".into(), "原台詞".into()));
+        app.single_result = Some((original.clone(), "原角色".into(), "原台詞".into(), Some("voice-example".into())));
         app.input_text = "已修改的台詞".into();
         app.audio_player.load_bytes(crate::audio::encode_pcm_to_wav(&[200; 800], 8000, 1));
         app.timeline.tracks.clear();
@@ -1767,6 +1778,7 @@ mod tests {
         let clip = app.timeline.clips.last().unwrap();
         assert_eq!(clip.text, "原台詞");
         assert_eq!(clip.speaker, "原角色");
+        assert_eq!(clip.voice_id.as_deref(), Some("voice-example"));
         assert_eq!(clip.audio_bytes.as_ref(), Some(&original));
         assert!(app.timeline.tracks.iter().any(|t| t.id == clip.track_id));
     }

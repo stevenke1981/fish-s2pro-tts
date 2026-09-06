@@ -69,6 +69,10 @@ pub struct TimelineClip {
     pub track_id: usize,
     pub name: String,
     pub speaker: String,
+    #[serde(default)]
+    pub voice_id: Option<String>,
+    #[serde(default)]
+    pub prompt_tag: Option<String>,
     pub text: String,
     pub start_sec: f32,        // 時間軸起始秒數
     pub duration_sec: f32,     // 時間軸佔用秒數 (受 trim 與 speed 影響)
@@ -113,6 +117,8 @@ impl TimelineClip {
             track_id,
             name,
             speaker,
+            voice_id: None,
+            prompt_tag: None,
             text,
             start_sec,
             duration_sec: raw_duration_sec,
@@ -152,6 +158,8 @@ impl TimelineClip {
             track_id,
             name,
             speaker,
+            voice_id: None,
+            prompt_tag: None,
             text,
             start_sec,
             duration_sec,
@@ -338,6 +346,7 @@ pub struct TimelineState {
 
     // TTS 生成狀態
     pub synthesizing_clip_id: Option<u64>,
+    pub external_generation_busy: bool,
 
     // 新增 TTS 模態視窗狀態
     pub show_tts_modal: bool,
@@ -425,6 +434,7 @@ impl TimelineState {
             error_message: None,
             success_toast: None,
             synthesizing_clip_id: None,
+            external_generation_busy: false,
             show_tts_modal: false,
             tts_modal_text: "[calm] 很久很久以前，在遙遠的森林深處……".to_string(),
             tts_modal_speaker_name: "旁白".to_string(),
@@ -438,7 +448,7 @@ impl TimelineState {
     }
 
     pub fn is_busy(&self) -> bool {
-        self.tts_modal_is_generating || self.synthesizing_clip_id.is_some()
+        self.external_generation_busy || self.tts_modal_is_generating || self.synthesizing_clip_id.is_some()
     }
 
     pub fn ensure_dialogue_track(&mut self) -> usize {
@@ -714,8 +724,9 @@ impl TimelineState {
             .cloned()
             .unwrap_or_else(|| characters[0].clone());
 
-        let speech_input = if !raw_text.contains(&char_preset.prompt_tag) {
-            format!("{} {}", char_preset.prompt_tag, raw_text)
+        let prompt_tag = clip.prompt_tag.as_deref().unwrap_or(&char_preset.prompt_tag);
+        let speech_input = if !prompt_tag.is_empty() && !raw_text.contains(prompt_tag) {
+            format!("{} {}", prompt_tag, raw_text)
         } else {
             raw_text.clone()
         };
@@ -723,7 +734,7 @@ impl TimelineState {
         let req = SpeechRequest {
             model: DEFAULT_MODEL.to_string(),
             input: speech_input,
-            voice: char_preset.voice_id.clone(),
+            voice: clip.voice_id.clone().or_else(|| char_preset.voice_id.clone()),
             response_format: Some("mp3".to_string()),
             speed: Some(1.0), // Timeline speed is applied by the mixer exactly once.
         };

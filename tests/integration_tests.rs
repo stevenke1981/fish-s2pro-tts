@@ -849,7 +849,7 @@ fn test_tts_to_timeline_workflows() {
             name: "角色甲".to_string(),
             character_preset_idx: 1,
             prompt_tag: "[甲聲線]".to_string(),
-            custom_voice_id: None,
+            custom_voice_id: Some("test-voice-a".to_string()),
             default_tone: "[calm]".to_string(),
             speed: 1.0,
             badge_color: [59, 130, 246],
@@ -886,6 +886,10 @@ fn test_tts_to_timeline_workflows() {
     app.send_multi_speech_to_timeline(cast, lines, None);
     assert_eq!(app.active_tab, AppTab::Timeline);
     assert_eq!(app.timeline.clips.len(), 2);
+    assert_eq!(app.timeline.clips[0].voice_id.as_deref(), Some("test-voice-a"));
+    assert_eq!(app.timeline.clips[0].prompt_tag.as_deref(), Some("[甲聲線]"));
+    assert!(app.timeline.clips[0].text.starts_with("[calm]"));
+    assert!(app.timeline.clips.iter().all(|clip| clip.pcm_samples.is_none()));
     assert!(app.timeline.tracks.iter().any(|t| t.name.contains("角色甲")));
     assert!(app.timeline.tracks.iter().any(|t| t.name.contains("角色乙")));
 
