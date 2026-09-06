@@ -119,3 +119,8 @@ D:/fish-s2pro-tts/
 2. 前往 [Keys 頁面](https://openrouter.ai/keys) 建立一個新的 API Key。
 3. 啟動本 App，在左側欄貼上 API Key（格式如 `sk-or-v1-...`）。
 4. 點擊「測試連線」驗證金鑰狀態後，即可暢享語音合成！
+
+
+## 使用體驗改善
+
+單人配音採「台詞 → 聲音 → 產生與試聽」流程，支援文字匯入／另存與一次復原；進階模型與情緒標籤預設收合。完整修改、限制與人工驗收請見 [UX-REDESIGN](docs/UX-REDESIGN.md)。

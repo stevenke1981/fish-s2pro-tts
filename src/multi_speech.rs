@@ -734,6 +734,7 @@ pub fn start_multi_generation(
     state: &mut MultiSpeechState,
     tx: Sender<crate::app::WorkerMessage>,
 ) {
+    if state.is_generating { return; }
     let key = api_key.trim().to_string();
     if key.is_empty() {
         state.error_message = Some("請先在左側設定中輸入 OpenRouter API Key".to_string());
@@ -789,7 +790,7 @@ pub fn start_multi_generation(
                         let timestamp_str = Local::now().format("%Y%m%d_%H%M%S").to_string();
                         let filename = format!("dialog_{}.{}", timestamp_str, format);
                         let output_path = PathBuf::from("outputs").join(&filename);
-                        let _ = fs::write(&output_path, &bytes);
+                        // Saved by the completion handler with visible error reporting.
 
                         let duration_secs = rodio::Decoder::new(std::io::Cursor::new(bytes.clone()))
                             .ok()
@@ -911,7 +912,7 @@ pub fn start_multi_generation(
                         let timestamp_str = Local::now().format("%Y%m%d_%H%M%S").to_string();
                         let filename = format!("dialog_concat_{}.{}", timestamp_str, format);
                         let output_path = PathBuf::from("outputs").join(&filename);
-                        let _ = fs::write(&output_path, &final_bytes);
+                        // Saved by the completion handler with visible error reporting.
 
                         let duration_secs = estimate_audio_duration(&final_bytes)
                             .map(|d| d.as_secs_f32());
@@ -1291,7 +1292,7 @@ pub fn render_multi_speech_page(
                                             ui.spinner();
                                             ui.label(RichText::new("試聽中...").color(Color32::from_rgb(99, 102, 241)).size(11.0));
                                         });
-                                    } else if ui.small_button("▶ 試聽單句").on_hover_text("單獨合成並試聽此句台詞").clicked() {
+                                    } else if ui.add_enabled(!state.is_generating && !api_key.trim().is_empty() && !line.text.trim().is_empty(), egui::Button::new("▶ 試聽單句")).on_hover_text("單獨合成並試聽此句台詞").clicked() {
                                         single_preview_line = Some(line.clone());
                                     }
                                 });
@@ -1357,6 +1358,7 @@ pub fn render_multi_speech_page(
                     let key = api_key.trim().to_string();
                     let tx_clone = tx.clone();
                     state.preview_line_id = Some(line.id);
+                    state.is_generating = true;
                     state.status_message = format!("正在試聽 Speaker {} 的單句台詞...", line.speaker_id);
 
                     thread::spawn(move || {

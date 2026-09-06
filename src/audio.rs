@@ -132,8 +132,17 @@ impl AudioPlayer {
         }
     }
 
+    /// Load a generated result without requiring a playback device or starting sound.
+    pub fn load_bytes(&mut self, bytes: Vec<u8>) {
+        self.stop();
+        self.total_duration = Decoder::new(Cursor::new(bytes.clone())).ok()
+            .and_then(|d| d.total_duration()).or_else(|| estimate_audio_duration(&bytes));
+        self.current_bytes = Some(bytes);
+    }
+
     /// 播放給定的音訊位元組（MP3 / WAV 等）
     pub fn play_bytes(&mut self, bytes: Vec<u8>) -> Result<(), String> {
+        self.load_bytes(bytes.clone());
         if self.stream_handle.is_none() {
             self.reconnect_device()?;
         }
@@ -363,6 +372,12 @@ pub fn export_audio_bytes(bytes: &[u8], target_path: &std::path::Path) -> Result
 
     let is_source_wav = bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WAVE";
 
+    if target_ext == "mp3" && is_source_wav {
+        return Err("目前不支援將 WAV 編碼為 MP3，請另存為 .wav。".to_string());
+    }
+    if !matches!(target_ext.as_str(), "mp3" | "wav") {
+        return Err("請使用 .mp3 或 .wav 副檔名。".to_string());
+    }
     if target_ext == "wav" && !is_source_wav {
         let (samples, sample_rate, channels) = decode_to_pcm(bytes)?;
         let wav = encode_pcm_to_wav(&samples, sample_rate, channels);
@@ -376,6 +391,29 @@ pub fn export_audio_bytes(bytes: &[u8], target_path: &std::path::Path) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn load_without_autoplay_keeps_audio_available_for_export() {
+        let bytes = encode_pcm_to_wav(&vec![0; 8000], 8000, 1);
+        let mut player = AudioPlayer::new();
+        player.load_bytes(bytes.clone());
+        assert_eq!(player.current_bytes(), Some(&bytes));
+        assert!(!player.is_playing());
+        assert_eq!(player.elapsed(), Duration::ZERO);
+        assert!(player.total_duration().is_some());
+        let replacement = encode_pcm_to_wav(&[1, 2, 3], 8000, 1);
+        player.load_bytes(replacement.clone());
+        assert_eq!(player.current_bytes(), Some(&replacement));
+    }
+
+    #[test]
+    fn wav_export_refuses_misleading_mp3_extension() {
+        let bytes = encode_pcm_to_wav(&[0; 8], 8000, 1);
+        let target = std::env::temp_dir().join(format!("fish-reject-{}.mp3", std::process::id()));
+        let result = export_audio_bytes(&bytes, &target);
+        assert!(result.unwrap_err().contains("不支援"));
+        assert!(!target.exists());
+    }
 
     #[test]
     fn test_audio_player_initialization() {
