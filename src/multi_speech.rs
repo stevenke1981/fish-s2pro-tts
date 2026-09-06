@@ -78,8 +78,11 @@ pub struct MultiSpeechState {
     pub error_message: Option<String>,
     pub success_toast: Option<String>,
     pub last_generated_bytes: Option<Vec<u8>>,
+    pub generated_cast: Vec<CastMember>,
+    pub generated_lines: Vec<DialogLine>,
     pub last_generated_path: Option<String>,
     pub preview_line_id: Option<u64>,
+    pub script_qa_issues: Option<Vec<crate::storytelling::ScriptQaIssue>>,
 }
 
 impl Default for MultiSpeechState {
@@ -155,8 +158,11 @@ impl MultiSpeechState {
             error_message: None,
             success_toast: None,
             last_generated_bytes: None,
+            generated_cast: Vec::new(),
+            generated_lines: Vec::new(),
             last_generated_path: None,
             preview_line_id: None,
+            script_qa_issues: None,
         }
     }
 
@@ -480,6 +486,187 @@ pub fn get_script_templates() -> Vec<ScriptTemplate> {
                 },
             ],
         },
+        ScriptTemplate {
+            title: "武俠夜探《古道殘陽》（武俠懸疑）",
+            description: "源自 Storytelling Skill：低沉神秘旁白、冷面刺客與隱世劍客的命運對決",
+            cast: vec![
+                CastMember {
+                    speaker_id: 0,
+                    name: "武俠說書旁白".to_string(),
+                    character_preset_idx: 5,
+                    prompt_tag: "[大氣專業紀錄片旁白播音員]".to_string(),
+                    custom_voice_id: None,
+                    default_tone: "[low voice] [speaking slowly] [mysterious]".to_string(),
+                    speed: 0.95,
+                    badge_color: [168, 85, 247],
+                },
+                CastMember {
+                    speaker_id: 1,
+                    name: "冷面刺客".to_string(),
+                    character_preset_idx: 9,
+                    prompt_tag: "[冷酷低沉神秘刺客]".to_string(),
+                    custom_voice_id: None,
+                    default_tone: "[low voice, dangerously calm]".to_string(),
+                    speed: 0.95,
+                    badge_color: [75, 85, 99],
+                },
+                CastMember {
+                    speaker_id: 2,
+                    name: "隱世劍客".to_string(),
+                    character_preset_idx: 3,
+                    prompt_tag: "[沉穩磁性男性音色]".to_string(),
+                    custom_voice_id: None,
+                    default_tone: "[sigh] [calm]".to_string(),
+                    speed: 0.95,
+                    badge_color: [59, 130, 246],
+                },
+            ],
+            lines: vec![
+                DialogLine {
+                    id: 1,
+                    speaker_id: 0,
+                    tone: "[low voice] [speaking slowly]".to_string(),
+                    text: "夜色沉沉，古道荒草叢生，四下沒有半點人聲。".to_string(),
+                    pause_after_ms: 400,
+                },
+                DialogLine {
+                    id: 2,
+                    speaker_id: 1,
+                    tone: "[low voice, dangerously calm]".to_string(),
+                    text: "交出玄鐵令，我留你全屍。".to_string(),
+                    pause_after_ms: 300,
+                },
+                DialogLine {
+                    id: 3,
+                    speaker_id: 2,
+                    tone: "[sigh] [calm]".to_string(),
+                    text: "退隱十年，終究還是躲不過這場血雨腥風。".to_string(),
+                    pause_after_ms: 350,
+                },
+                DialogLine {
+                    id: 4,
+                    speaker_id: 0,
+                    tone: "[whispering] [short pause]".to_string(),
+                    text: "寒芒乍現，殘葉落處，風止。".to_string(),
+                    pause_after_ms: 500,
+                },
+            ],
+        },
+        ScriptTemplate {
+            title: "恐怖驚悚《午夜鐘聲》（恐怖靈異）",
+            description: "源自 Storytelling Skill：壓抑低語、長停頓呼吸急促的心跳驚悚劇本",
+            cast: vec![
+                CastMember {
+                    speaker_id: 0,
+                    name: "低語旁白".to_string(),
+                    character_preset_idx: 5,
+                    prompt_tag: "[大氣專業紀錄片旁白播音員]".to_string(),
+                    custom_voice_id: None,
+                    default_tone: "[low voice] [speaking slowly] [mysterious]".to_string(),
+                    speed: 0.9,
+                    badge_color: [75, 85, 99],
+                },
+                CastMember {
+                    speaker_id: 1,
+                    name: "探險者".to_string(),
+                    character_preset_idx: 4,
+                    prompt_tag: "[熱血清亮少年音色]".to_string(),
+                    custom_voice_id: None,
+                    default_tone: "[whispering] [nervous]".to_string(),
+                    speed: 0.95,
+                    badge_color: [245, 158, 11],
+                },
+                CastMember {
+                    speaker_id: 2,
+                    name: "未知幽語".to_string(),
+                    character_preset_idx: 1,
+                    prompt_tag: "[溫柔知性御姐音色]".to_string(),
+                    custom_voice_id: None,
+                    default_tone: "[whispering] [soft voice]".to_string(),
+                    speed: 0.85,
+                    badge_color: [168, 85, 247],
+                },
+            ],
+            lines: vec![
+                DialogLine {
+                    id: 1,
+                    speaker_id: 0,
+                    tone: "[low voice] [speaking slowly]".to_string(),
+                    text: "整棟洋房空無一人，但空氣中卻飄著淡淡的潮濕霉味。".to_string(),
+                    pause_after_ms: 450,
+                },
+                DialogLine {
+                    id: 2,
+                    speaker_id: 1,
+                    tone: "[whispering] [nervous]".to_string(),
+                    text: "喂……有人在那裡嗎？不要開這種玩笑……".to_string(),
+                    pause_after_ms: 350,
+                },
+                DialogLine {
+                    id: 3,
+                    speaker_id: 0,
+                    tone: "[gasp] [long pause]".to_string(),
+                    text: "咚……午夜十二點的鐘聲，毫無預警地敲響了第一聲。".to_string(),
+                    pause_after_ms: 600,
+                },
+                DialogLine {
+                    id: 4,
+                    speaker_id: 2,
+                    tone: "[whispering] [soft voice]".to_string(),
+                    text: "你終於……來陪我了……".to_string(),
+                    pause_after_ms: 500,
+                },
+            ],
+        },
+        ScriptTemplate {
+            title: "睡前童話《星光森林》（溫柔治癒）",
+            description: "源自 Storytelling Skill：極致舒緩安眠的森林小動物睡前故事",
+            cast: vec![
+                CastMember {
+                    speaker_id: 0,
+                    name: "溫柔說書人".to_string(),
+                    character_preset_idx: 1,
+                    prompt_tag: "[溫柔知性御姐音色]".to_string(),
+                    custom_voice_id: None,
+                    default_tone: "[soft voice] [warm] [speaking slowly]".to_string(),
+                    speed: 0.88,
+                    badge_color: [236, 72, 153],
+                },
+                CastMember {
+                    speaker_id: 1,
+                    name: "小狐狸".to_string(),
+                    character_preset_idx: 2,
+                    prompt_tag: "[活力元氣少女音色]".to_string(),
+                    custom_voice_id: None,
+                    default_tone: "[soft voice] [sigh]".to_string(),
+                    speed: 0.9,
+                    badge_color: [249, 115, 22],
+                },
+            ],
+            lines: vec![
+                DialogLine {
+                    id: 1,
+                    speaker_id: 0,
+                    tone: "[soft voice] [warm]".to_string(),
+                    text: "月亮升起來了，柔和的銀光灑在整片安靜的森林上。".to_string(),
+                    pause_after_ms: 400,
+                },
+                DialogLine {
+                    id: 2,
+                    speaker_id: 1,
+                    tone: "[soft voice] [sigh]".to_string(),
+                    text: "今天走了一整天，星星看起來好溫暖呀。".to_string(),
+                    pause_after_ms: 300,
+                },
+                DialogLine {
+                    id: 3,
+                    speaker_id: 0,
+                    tone: "[warm storyteller tone, measured pacing]".to_string(),
+                    text: "小狐狸蜷縮在厚厚的苔蘚上，慢慢闔上了眼睛。晚安，做個好夢。".to_string(),
+                    pause_after_ms: 600,
+                },
+            ],
+        },
     ]
 }
 
@@ -758,6 +945,10 @@ pub fn start_multi_generation(
         return;
     }
 
+    state.generated_cast = state.cast.clone();
+    state.generated_lines = state.lines.clone();
+    state.last_generated_bytes = None;
+    state.last_generated_path = None;
     state.is_generating = true;
     state.error_message = None;
     state.status_message = "正在啟動多角色語音生成流程...".to_string();
@@ -955,6 +1146,17 @@ pub fn start_multi_generation(
     }
 }
 
+/// 多角色頁面動作通知
+#[derive(Clone, Debug, PartialEq)]
+pub enum MultiSpeechAction {
+    None,
+    SendToTimeline {
+        cast: Vec<CastMember>,
+        lines: Vec<DialogLine>,
+        composite_bytes: Option<Vec<u8>>,
+    },
+}
+
 /// 繪製多角色語音生成管理頁面 UI
 pub fn render_multi_speech_page(
     ui: &mut egui::Ui,
@@ -963,7 +1165,8 @@ pub fn render_multi_speech_page(
     api_key: &str,
     audio_player: &mut crate::audio::AudioPlayer,
     tx: Sender<crate::app::WorkerMessage>,
-) {
+) -> MultiSpeechAction {
+    let mut timeline_action = MultiSpeechAction::None;
     ui.add_space(6.0);
 
     // 錯誤與成功訊息橫幅
@@ -1518,7 +1721,124 @@ pub fn render_multi_speech_page(
                             }
                         }
                     }
+
+                    // 傳送至時間軸多軌
+                    let has_lines = !state.lines.is_empty();
+                    if ui
+                        .add_enabled(
+                            has_lines,
+                            egui::Button::new(RichText::new("🎞️ 將劇本匯入時間軸多軌").strong())
+                                .fill(Color32::from_rgb(16, 185, 129))
+                                .min_size(Vec2::new(135.0, 36.0)),
+                        )
+                        .on_hover_text("自動依登場角色分軌，將劇本所有台詞排入時間軸編輯器！")
+                        .clicked()
+                    {
+                        timeline_action = MultiSpeechAction::SendToTimeline {
+                            cast: state.cast.clone(),
+                            lines: state.lines.clone(),
+                            composite_bytes: None, // Script import creates drafts; complete mix is a separate action.
+                        };
+                    }
+
+                    if ui.add_enabled(!state.is_generating && state.last_generated_bytes.is_some(),
+                        egui::Button::new("匯入上次完整混音")).on_hover_text("保持整段音訊，不推測逐句邊界；使用生成當時的劇本。").clicked() {
+                        timeline_action = MultiSpeechAction::SendToTimeline {
+                            cast: state.generated_cast.clone(),
+                            lines: state.generated_lines.clone(),
+                            composite_bytes: state.last_generated_bytes.clone(),
+                        };
+                    }
+
+                    // 劇本 QA 審查按鈕
+                    if ui
+                        .add_enabled(
+                            has_lines,
+                            egui::Button::new(RichText::new("🔍 劇本 QA 審查").strong())
+                                .fill(Color32::from_rgb(14, 165, 233))
+                                .min_size(Vec2::new(115.0, 36.0)),
+                        )
+                        .on_hover_text("審查目前多角色劇本台詞是否含有違規、空白、標籤異常或語速過長問題")
+                        .clicked()
+                    {
+                        let story_lines: Vec<crate::storytelling::StoryLine> = state
+                            .lines
+                            .iter()
+                            .map(|l| {
+                                let spk_name = state
+                                    .cast
+                                    .iter()
+                                    .find(|c| c.speaker_id == l.speaker_id)
+                                    .map(|c| c.name.clone())
+                                    .unwrap_or_else(|| format!("Speaker {}", l.speaker_id));
+                                let is_narrator = spk_name.contains("旁白") || spk_name.contains("說書人");
+                                let mut tags = Vec::new();
+                                if !l.tone.trim().is_empty() {
+                                    let clean_tone = l.tone.trim().trim_matches(|c| c == '[' || c == ']');
+                                    if !clean_tone.is_empty() {
+                                        tags.push(clean_tone.to_string());
+                                    }
+                                }
+                                crate::storytelling::StoryLine {
+                                    speaker: spk_name,
+                                    is_narrator,
+                                    tags,
+                                    text: l.text.clone(),
+                                    pause_after_ms: l.pause_after_ms,
+                                    intensity: crate::storytelling::EmotionIntensityLevel::Level2Normal,
+                                }
+                            })
+                            .collect();
+                        let issues = crate::storytelling::qa_check_story_script(&story_lines);
+                        state.script_qa_issues = Some(issues);
+                    }
                 });
+
+                // 劇本 QA 審查報告卡片
+                if let Some(issues) = &state.script_qa_issues {
+                    ui.add_space(8.0);
+                    let mut dismiss_qa = false;
+                    egui::Frame::group(ui.style())
+                        .corner_radius(8)
+                        .inner_margin(12.0)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                if issues.is_empty() {
+                                    ui.strong(RichText::new("✓ 劇本 QA 審查通過：未發現任何異常或格式問題！").color(Color32::from_rgb(34, 197, 94)));
+                                } else {
+                                    ui.strong(RichText::new(format!("🔍 劇本 QA 審查診斷報告 (共發現 {} 項建議)", issues.len())).color(Color32::from_rgb(245, 158, 11)));
+                                }
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.small_button("✕ 關閉報告").clicked() {
+                                        dismiss_qa = true;
+                                    }
+                                });
+                            });
+
+                            if !issues.is_empty() {
+                                ui.add_space(6.0);
+                                for issue in issues {
+                                    let c = issue.severity.color();
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            RichText::new(format!("[{}]", issue.severity.label()))
+                                                .color(Color32::from_rgb(c[0], c[1], c[2]))
+                                                .strong(),
+                                        );
+                                        ui.label(format!("第 {} 句:", issue.line_index + 1));
+                                        ui.label(&issue.message);
+                                        ui.label(
+                                            RichText::new(format!("(建議: {})", issue.suggested_fix))
+                                                .color(Color32::from_rgb(148, 163, 184)),
+                                        );
+                                    });
+                                }
+                            }
+                        });
+                    if dismiss_qa {
+                        state.script_qa_issues = None;
+                    }
+                }
 
                 ui.add_space(8.0);
 
@@ -1564,6 +1884,8 @@ pub fn render_multi_speech_page(
 
         ui.add_space(16.0);
     });
+
+    timeline_action
 }
 
 #[cfg(test)]

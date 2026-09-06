@@ -597,3 +597,471 @@ fn test_scan_output_files_history_matching_and_duration() {
     let _ = fs::remove_file(file_path);
     let _ = fs::remove_dir_all(temp_dir);
 }
+
+#[test]
+fn test_storytelling_presets_and_director_tags() {
+    use fish_s2pro_tts::storytelling::{
+        get_director_tags, get_story_presets, get_story_script_templates,
+        EmotionIntensityLevel,
+    };
+
+    // 1. 驗證所有故事體裁預設
+    let presets = get_story_presets();
+    assert!(presets.len() >= 12, "應至少包含 12 種故事體裁預設");
+    for p in &presets {
+        assert!(!p.id.is_empty());
+        assert!(!p.name.is_empty());
+        assert!(!p.description.is_empty());
+        assert!(!p.base_tags.is_empty());
+        assert!(!p.narrator_tags.is_empty());
+        assert!(p.recommended_speed >= 0.8 && p.recommended_speed <= 1.2);
+    }
+
+    // 2. 驗證自然語言導演標籤庫與強度分級
+    let tags = get_director_tags();
+    assert!(tags.len() >= 25, "應包含豐富的自然語言導演標籤");
+    let mut has_cinematic = false;
+    let mut has_physical = false;
+    for t in &tags {
+        assert!(t.tag.starts_with('[') && t.tag.ends_with(']'));
+        assert!(!t.label.is_empty());
+        assert!(!t.example.is_empty());
+        if t.intensity == EmotionIntensityLevel::Level5Cinematic {
+            has_cinematic = true;
+        }
+        if t.intensity == EmotionIntensityLevel::Level4Physical {
+            has_physical = true;
+        }
+    }
+    assert!(has_cinematic, "應包含 Level 5 電影級複合導演指令");
+    assert!(has_physical, "應包含 Level 4 生理呼吸反應指令");
+
+    // 3. 驗證故事劇本範本
+    let templates = get_story_script_templates();
+    assert!(templates.len() >= 4, "應包含至少 4 款故事劇本範本");
+    for tmpl in &templates {
+        assert!(!tmpl.title.is_empty());
+        assert!(!tmpl.lines.is_empty());
+        assert!(tmpl.lines.iter().any(|l| l.is_narrator), "劇本應包含旁白");
+        assert!(tmpl.lines.iter().any(|l| !l.is_narrator), "劇本應包含角色對白");
+    }
+}
+
+#[test]
+fn test_storytelling_auto_director_and_qa() {
+    use fish_s2pro_tts::storytelling::{
+        auto_direct_story, format_story_line_tts, get_story_presets, qa_check_story_script,
+        EmotionIntensityLevel, StoryLine,
+    };
+
+    let presets = get_story_presets();
+    let horror_preset = presets.iter().find(|p| p.id == "horror").expect("應存在恐怖預設");
+
+    // 測試自動導演：辨析對白與旁白、自動加標籤
+    let script = "廢棄的洋房中，寒風呼嘯。\n「救命！救救我！」\n「……沒有人會來救你。」";
+    let directed = auto_direct_story(script, horror_preset);
+    assert_eq!(directed.len(), 3);
+    assert!(directed[0].is_narrator);
+    assert!(directed[0].tags.contains(&"speaking slowly".to_string()));
+
+    assert!(!directed[1].is_narrator);
+    assert!(directed[1].tags.contains(&"excited".to_string()));
+    assert_eq!(directed[1].intensity, EmotionIntensityLevel::Level3Strong);
+
+    assert!(!directed[2].is_narrator);
+    assert!(directed[2].tags.contains(&"soft voice".to_string()));
+
+    // 測試台詞 TTS 格式化
+    let tts_text = format_story_line_tts(&directed[1]);
+    assert!(tts_text.starts_with("[excited]"));
+    assert!(tts_text.contains("救命！救救我！"));
+
+    // 測試 QA 規則檢測 (單段過長、標籤過多堆疊、過多驚嘆號)
+    let bad_lines = vec![
+        StoryLine {
+            speaker: "旁白".to_string(),
+            is_narrator: true,
+            tags: vec!["tag1".into(), "tag2".into(), "tag3".into(), "tag4".into(), "tag5".into()],
+            text: "出大事了！！！真的出大事了！！！快跑！！！".to_string(),
+            pause_after_ms: 300,
+            intensity: EmotionIntensityLevel::Level4Physical,
+        },
+        StoryLine {
+            speaker: "主角".to_string(),
+            is_narrator: false,
+            tags: vec!["calm".into()],
+            text: "長文測試".repeat(80),
+            pause_after_ms: 300,
+            intensity: EmotionIntensityLevel::Level1Light,
+        },
+    ];
+
+    let issues = qa_check_story_script(&bad_lines);
+    assert!(issues.iter().any(|i| i.message.contains("標籤堆疊過多")));
+    assert!(issues.iter().any(|i| i.message.contains("過多驚嘆號")));
+    assert!(issues.iter().any(|i| i.message.contains("文字過長")));
+}
+
+#[test]
+fn test_multi_track_timeline_operations_and_mixdown() {
+    use fish_s2pro_tts::timeline::{TimelineClip, TimelineState, TrackType};
+    use std::fs;
+
+    let mut timeline = TimelineState::new();
+    assert_eq!(timeline.tracks.len(), 4);
+
+    // 測試動態加軌與刪軌
+    timeline.add_track("音效環境軌 2".to_string(), TrackType::Sfx);
+    assert_eq!(timeline.tracks.len(), 5);
+    let last_track_id = timeline.tracks.last().unwrap().id;
+    timeline.delete_track(last_track_id);
+    assert_eq!(timeline.tracks.len(), 4);
+
+    // 加入 3 個不同軌道與時間的測試片段
+    let c1 = TimelineClip::new_mock(
+        1,
+        0, // Track 0
+        "主角開場".to_string(),
+        "主角".to_string(),
+        "準備出發！".to_string(),
+        0.0,
+        2.0,
+        [59, 130, 246],
+    );
+    let c2 = TimelineClip::new_mock(
+        2,
+        1, // Track 1
+        "配角回應".to_string(),
+        "配角".to_string(),
+        "收到，立刻跟上！".to_string(),
+        2.2,
+        2.5,
+        [249, 115, 22],
+    );
+    let c3 = TimelineClip::new_mock(
+        3,
+        3, // Track 3 (BGM)
+        "背景音樂".to_string(),
+        "BGM".to_string(),
+        "音樂持續中".to_string(),
+        0.0,
+        6.0,
+        [16, 185, 129],
+    );
+
+    timeline.clips.push(c1);
+    timeline.clips.push(c2);
+    timeline.clips.push(c3);
+
+    assert_eq!(timeline.clips.len(), 3);
+    assert!((timeline.total_timeline_duration() - 6.0).abs() < 0.1);
+
+    // Supply actual audio fixtures: draft clips must not mix as placeholder sine tones.
+    for clip in &mut timeline.clips {
+        let samples = vec![1200i16; (clip.raw_duration_sec * 44100.0) as usize];
+        clip.audio_bytes = Some(fish_s2pro_tts::audio::encode_pcm_to_wav(&samples, 44100, 1));
+        clip.pcm_samples = Some(samples);
+    }
+    // 測試混音引擎
+    let (pcm, sr, ch) = timeline.mix_timeline_to_pcm().expect("多軌混音應成功");
+    assert_eq!(sr, 44100);
+    assert_eq!(ch, 2);
+    assert!(!pcm.is_empty());
+
+    // 測試軌道靜音 (Mute) 與獨奏 (Solo)
+    timeline.tracks[0].is_muted = true;
+    let (pcm_muted, _, _) = timeline.mix_timeline_to_pcm().expect("靜音混音應成功");
+    assert_eq!(pcm_muted.len(), pcm.len());
+
+    timeline.tracks[0].is_muted = false;
+    timeline.tracks[3].is_solo = true; // 僅 BGM 獨奏
+    let (pcm_solo, _, _) = timeline.mix_timeline_to_pcm().expect("獨奏混音應成功");
+    assert_eq!(pcm_solo.len(), pcm.len());
+
+    // 測試匯出成 WAV 檔案
+    let temp_dir = std::env::temp_dir().join("timeline_mix_test");
+    let _ = fs::create_dir_all(&temp_dir);
+    let out_wav = temp_dir.join("timeline_composite.wav");
+    timeline.export_timeline_mix(&out_wav).expect("匯出 WAV 應成功");
+    assert!(out_wav.exists());
+
+    let header = fs::read(&out_wav).unwrap();
+    assert_eq!(&header[0..4], b"RIFF");
+    assert_eq!(&header[8..12], b"WAVE");
+
+    let _ = fs::remove_file(out_wav);
+    let _ = fs::remove_dir_all(temp_dir);
+}
+
+#[test]
+fn test_timeline_clip_trimming_and_splitting_pipeline() {
+    use fish_s2pro_tts::timeline::TimelineClip;
+
+    let mut clip = TimelineClip::new_mock(
+        100,
+        0,
+        "長對白音檔".to_string(),
+        "說話者".to_string(),
+        "這是一段需要修剪與剪切的完整長句".to_string(),
+        1.0,
+        10.0,
+        [59, 130, 246],
+    );
+
+    // 1. 速度調整
+    clip.speed = 1.25;
+    clip.recalculate_duration();
+    assert!((clip.duration_sec - 8.0).abs() < 0.05);
+
+    // 2. 開頭與結尾修剪 (Trim in / Trim out)
+    clip.speed = 1.0;
+    clip.trim_start_sec = 2.0;
+    clip.trim_end_sec = 3.0;
+    clip.recalculate_duration();
+    // 原始 10s - 2s - 3s = 5s
+    assert!((clip.duration_sec - 5.0).abs() < 0.05);
+
+    // 3. 剪切 (Split at playhead)
+    // 片段從 1.0s 開始，有效時長 5.0s (結束於 6.0s)。在 3.0s 處剪切！
+    let (first_part, second_part) = clip.split_at(3.0, 101).expect("剪切應成功");
+
+    assert_eq!(first_part.id, 100);
+    assert_eq!(first_part.start_sec, 1.0);
+    assert!((first_part.duration_sec - 2.0).abs() < 0.05);
+
+    assert_eq!(second_part.id, 101);
+    assert_eq!(second_part.start_sec, 3.0);
+    assert!((second_part.duration_sec - 3.0).abs() < 0.05);
+}
+
+#[test]
+fn test_tts_to_timeline_workflows() {
+    use fish_s2pro_tts::app::{AppTab, FishTtsApp};
+    use fish_s2pro_tts::multi_speech::{CastMember, DialogLine};
+    use std::fs;
+
+    let mut app = FishTtsApp::default();
+
+    // 1. 測試多角色劇本分軌傳送至時間軸 (Multi-Speech -> Timeline)
+    let cast = vec![
+        CastMember {
+            speaker_id: 0,
+            name: "角色甲".to_string(),
+            character_preset_idx: 1,
+            prompt_tag: "[甲聲線]".to_string(),
+            custom_voice_id: None,
+            default_tone: "[calm]".to_string(),
+            speed: 1.0,
+            badge_color: [59, 130, 246],
+        },
+        CastMember {
+            speaker_id: 1,
+            name: "角色乙".to_string(),
+            character_preset_idx: 3,
+            prompt_tag: "[乙聲線]".to_string(),
+            custom_voice_id: None,
+            default_tone: "[excited]".to_string(),
+            speed: 1.0,
+            badge_color: [249, 115, 22],
+        },
+    ];
+
+    let lines = vec![
+        DialogLine {
+            id: 1,
+            speaker_id: 0,
+            tone: "[calm]".to_string(),
+            text: "第一句對白。".to_string(),
+            pause_after_ms: 300,
+        },
+        DialogLine {
+            id: 2,
+            speaker_id: 1,
+            tone: "[excited]".to_string(),
+            text: "第二句對白！".to_string(),
+            pause_after_ms: 400,
+        },
+    ];
+
+    app.send_multi_speech_to_timeline(cast, lines, None);
+    assert_eq!(app.active_tab, AppTab::Timeline);
+    assert_eq!(app.timeline.clips.len(), 2);
+    assert!(app.timeline.tracks.iter().any(|t| t.name.contains("角色甲")));
+    assert!(app.timeline.tracks.iter().any(|t| t.name.contains("角色乙")));
+
+    // 2. 測試本機檔案路徑載入時間軸 (FileManager / File -> Timeline)
+    let temp_dir = std::env::temp_dir().join("fish_tts_forward_test");
+    let _ = fs::create_dir_all(&temp_dir);
+    let sample_file = temp_dir.join("sample_audio.wav");
+
+    let dummy_samples: Vec<i16> = vec![0; 44100];
+    let wav_bytes = fish_s2pro_tts::audio::encode_pcm_to_wav(&dummy_samples, 44100, 1);
+    fs::write(&sample_file, wav_bytes).expect("寫入測試 WAV");
+
+    app.send_file_path_to_timeline(&sample_file);
+    assert_eq!(app.timeline.clips.len(), 3);
+    assert_eq!(app.active_tab, AppTab::Timeline);
+
+    let _ = fs::remove_file(sample_file);
+    let _ = fs::remove_dir_all(temp_dir);
+}
+
+#[test]
+fn test_timeline_audio_slicing_and_waveform_refresh() {
+    use fish_s2pro_tts::audio::encode_pcm_to_wav;
+    use fish_s2pro_tts::timeline::TimelineClip;
+
+    let sample_rate = 44100u32;
+    let duration_sec = 2.0f32;
+    let total_samples = (sample_rate as f32 * duration_sec) as usize;
+
+    // 前半段安靜 (振幅 1000)，後半段大聲 (振幅 25000)
+    let mut pcm = Vec::with_capacity(total_samples);
+    for i in 0..total_samples {
+        if i < total_samples / 2 {
+            pcm.push(1000i16);
+        } else {
+            pcm.push(25000i16);
+        }
+    }
+
+    let wav_bytes = encode_pcm_to_wav(&pcm, sample_rate, 1);
+    let mut clip = TimelineClip::new(
+        1,
+        0,
+        "測試波形片段".to_string(),
+        "主角".to_string(),
+        "前半段安靜，後半段大聲".to_string(),
+        0.0,
+        wav_bytes,
+        None,
+        [59, 130, 246],
+    )
+    .expect("建立 Clip 應成功");
+
+    assert_eq!(clip.waveform_peaks.len(), 120);
+    assert!(clip.waveform_peaks[0] < 0.1);
+    assert!(clip.waveform_peaks[119] > 0.6);
+
+    // 修剪掉前半段 (trim_start_sec = 1.0)
+    clip.trim_start_sec = 1.0;
+    clip.recalculate_duration();
+    assert!((clip.duration_sec - 1.0).abs() < 0.05);
+
+    // 重新計算後，開頭的波形應該是修剪後的大聲波形
+    assert!(clip.waveform_peaks[0] > 0.6);
+
+    // 測試 split_at：在 0.5s 處切割 (對應原始音訊 1.5s 處)
+    let (first, second) = clip.split_at(0.5, 2).expect("切割應成功");
+    assert_eq!(first.id, 1);
+    assert_eq!(second.id, 2);
+    assert!((first.duration_sec - 0.5).abs() < 0.05);
+    assert!((second.duration_sec - 0.5).abs() < 0.05);
+    assert_eq!(first.waveform_peaks.len(), 120);
+    assert_eq!(second.waveform_peaks.len(), 120);
+}
+
+#[test]
+fn test_storytelling_template_loading_into_timeline() {
+    use fish_s2pro_tts::storytelling::get_story_script_templates;
+    use fish_s2pro_tts::timeline::TimelineState;
+
+    let templates = get_story_script_templates();
+    assert!(!templates.is_empty());
+
+    let mut timeline = TimelineState::new();
+    timeline.load_story_template_project(&templates[0]);
+
+    // 驗證武俠模板載入：應有旁白軌與台詞軌，且片段數量等於模板行數
+    assert_eq!(timeline.clips.len(), templates[0].lines.len());
+    assert!(timeline.tracks.iter().any(|t| t.name.contains("旁白")));
+    assert!(timeline.total_timeline_duration() > 1.0);
+
+    // 驗證台詞在時間軸上的起始時間遞增
+    let mut last_start = 0.0;
+    for clip in &timeline.clips {
+        assert!(clip.start_sec >= last_start);
+        last_start = clip.start_sec;
+    }
+}
+
+#[test]
+fn test_multi_speech_with_real_composite_audio_forward_to_timeline() {
+    use fish_s2pro_tts::app::FishTtsApp;
+    use fish_s2pro_tts::audio::encode_pcm_to_wav;
+    use fish_s2pro_tts::multi_speech::{CastMember, DialogLine};
+
+    let mut app = FishTtsApp::default();
+
+    let cast = vec![
+        CastMember {
+            speaker_id: 0,
+            name: "旁白大師".to_string(),
+            character_preset_idx: 0,
+            prompt_tag: "[旁白]".to_string(),
+            custom_voice_id: None,
+            default_tone: "[calm]".to_string(),
+            speed: 1.0,
+            badge_color: [59, 130, 246],
+        },
+        CastMember {
+            speaker_id: 1,
+            name: "主角英雄".to_string(),
+            character_preset_idx: 1,
+            prompt_tag: "[英雄]".to_string(),
+            custom_voice_id: None,
+            default_tone: "[excited]".to_string(),
+            speed: 1.0,
+            badge_color: [249, 115, 22],
+        },
+    ];
+
+    let lines = vec![
+        DialogLine {
+            id: 1,
+            speaker_id: 0,
+            tone: "[calm]".to_string(),
+            text: "在遙遠的古代大陸上。".to_string(),
+            pause_after_ms: 200,
+        },
+        DialogLine {
+            id: 2,
+            speaker_id: 1,
+            tone: "[excited]".to_string(),
+            text: "我一定要找到傳說中的聖劍！".to_string(),
+            pause_after_ms: 200,
+        },
+    ];
+
+    // 模擬 4 秒真實合成音訊
+    let sample_rate = 44100u32;
+    let dummy_pcm = vec![5000i16; 44100 * 4];
+    let composite_wav = encode_pcm_to_wav(&dummy_pcm, sample_rate, 1);
+
+    app.send_multi_speech_to_timeline(cast, lines, Some(composite_wav.clone()));
+
+    assert_eq!(app.timeline.clips.len(), 1);
+    assert_eq!(app.timeline.clips[0].audio_bytes.as_ref(), Some(&composite_wav));
+    assert!((app.timeline.clips[0].duration_sec - 4.0).abs() < 0.01);
+    // No forced character-count boundaries: preserve complete real audio.
+    for clip in &app.timeline.clips {
+        assert!(clip.audio_bytes.is_some(), "片段應包含真實 audio_bytes");
+        assert!(clip.pcm_samples.is_some(), "片段應包含真實 pcm_samples");
+        assert!(!clip.waveform_peaks.is_empty(), "片段應有波形峰值");
+    }
+}
+
+
+#[test]
+fn story_qa_reads_existing_tags_without_inventing_director_tags() {
+    use fish_s2pro_tts::storytelling::{parse_story_script, qa_check_story_script, auto_direct_story, get_story_presets};
+    let input = "[calm][soft][slow][warm][happy] 你好\n[broken 台詞";
+    let parsed = parse_story_script(input);
+    let issues = qa_check_story_script(&parsed);
+    assert!(issues.iter().any(|i| i.line_index == 0 && i.message.contains("堆疊")));
+    assert!(issues.iter().any(|i| i.line_index == 1 && i.message.contains("閉合")));
+    let preset = &get_story_presets()[0];
+    let once = auto_direct_story("[calm] 你好", preset);
+    assert_eq!(once[0].text, "你好");
+    assert_eq!(once[0].tags.iter().filter(|t| *t == "calm").count(), 1);
+}

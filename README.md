@@ -7,14 +7,14 @@
 ## 🌟 核心特色
 
 1. **純 Rust 原生 GUI**：
-   - 使用 `egui 0.31` 與 `eframe` 構建，啟動即時（< 0.1 秒），記憶體佔用極低。
+   - 使用 `egui 0.31` 與 `eframe` 構建，原生桌面介面；效能需依實際硬體量測。
    - 預載微軟正黑體（Microsoft JhengHei）字型渲染，繁簡中文字元、標點符號與符號完整清晰呈現，杜絕缺字亂碼（豆腐塊）。
    - 支援深色模式（Dark）與淺色模式（Light）一鍵切換。
 
 2. **完整對接 OpenRouter Fish Audio S2.1 Pro**：
    - 預設免費模型：`fish-audio/s2.1-pro-free:free`
    - 支援切換 `fish-audio/s2.1-pro`（生產付費級）、`fish-audio/s2-pro`、`fish-audio/s1` 或自訂模型。
-   - 提供 API Key 掩碼切換、連線有效性測試（顯示可用額度/免費層標籤）與安全本機儲存（`fish_tts_config.json`）。
+   - 提供 API Key 掩碼切換、連線有效性測試（顯示可用額度/免費層標籤）與可選的本機明文儲存（`fish_tts_config.json`）。
 
 3. **強大的角色與聲線設定（角色）**：
    - 內建 8 種預設角色聲線：
@@ -58,6 +58,17 @@
      - **循序合成與無縫拼接模式**：逐句請求並自動插入精確的毫秒級靜音（支援 WAV PCM 與 MP3 格式），即時回報合成進度條與步數。
    - 支援純文字劇本結構化匯出（【登場角色配置】與【劇本對白內容】）及合成完整對白音訊匯出。
 
+8. **深層故事演繹與智慧導演 (Storytelling Studio)**：
+   - 整合 `fish-audio-s2.1-pro-storytelling` 專業體系，涵蓋多種故事體裁（懸疑推理、恐怖怪談、玄幻武俠、浪漫治癒、少兒睡前繪本、科幻史詩）與 10 大導演標籤系統（氣息呼吸、距離遠近、重音與節奏節拍、語速突變等）。
+   - **🎭 智慧自動導演 (Auto-Director)**：依體裁、引號及標點的本機規則加入情緒建議，不代表 AI 語意分析或最佳演繹保證。
+   - **🔍 專業劇本 QA 審查 (Script QA Lint)**：即時靜態診斷台詞標籤閉合、過度密集情緒標籤、發音人標籤衝突與段落呼吸節奏，提供可視化診斷報告與修復建議。
+
+9. **剪映 / Filmora 風格專業多軌時間軸編輯器 (Timeline Editor)**：
+   - **視覺化多軌工作區**：支援旁白軌、多角色人物分軌、背景音樂（BGM）與環境音效軌。
+   - **即時波形與片段操控**：動態縮放與即時繪製真實 PCM 音訊波形，支援滑鼠拖曳、跨軌道吸附切換、開頭/結尾邊界修剪手柄（Trim）、精確時間碼（30fps）。
+   - **播放頭 (Playhead) 平滑拖曳與 Scrubbing**：即時定位與同步音訊預覽，支援快捷鍵（Space 播放/暫停、S 或 Ctrl+B 播放頭非破壞分割、Delete 刪除）。
+   - **直接 TTS 生成與多軌混音匯出**：選取 Clip 即可直接呼叫 TTS 重新合成，並支援將多軌道整體非破壞渲染混音為立體聲 WAV 檔案（目前沒有 MP3 編碼器）。
+
 ---
 
 ## 🚀 快速開始
@@ -77,8 +88,8 @@ target\release\fish-s2pro-tts.exe
 # 檢查相依與編譯
 cargo build --release
 
-# 執行測試套件
-cargo test --all-targets
+# 執行測試套件 （單元與整合測試）
+cargo test --locked --all-targets
 
 # 程式碼風格與靜態檢查
 cargo clippy --all-targets
@@ -94,21 +105,23 @@ cargo run
 ```
 D:/fish-s2pro-tts/
 ├── Cargo.toml                  # 專案相依與清單
-├── fish_tts_config.json        # 本機配置與金鑰安全儲存
+├── fish_tts_config.json        # 本機配置與金鑰明文儲存
 ├── outputs/                    # 每次合成音檔自動快取目錄
 ├── src/
 │   ├── main.rs                 # 桌面視窗入口與原生執行器
 │   ├── lib.rs                  # 函式庫模組匯出
-│   ├── app.rs                  # egui 原生 UI 介面、分頁路由與非同步通訊
+│   ├── app.rs                  # egui 原生 UI 介面、分頁導覽與非同步通訊
 │   ├── api.rs                  # OpenRouter TTS 與 Key Auth API 客戶端
 │   ├── audio.rs                # rodio 音訊播放器、PCM/WAV 轉碼與時長估算
 │   ├── config.rs               # 設定檔讀寫與序列化
 │   ├── file_manager.rs         # 語音檔案總管頁面、批次管理、排序篩選與專用播放列
 │   ├── fonts.rs                # Windows 中文字型動態綁定
-│   ├── models.rs               # 角色預設、情緒標籤庫與示範腳本
-│   └── multi_speech.rs         # 多角色對白管理、演員陣容、逐句編輯與靜音拼接引擎
+│   ├── models.rs               # 角色預設、情緒標籤庫與故事範本腳本
+│   ├── multi_speech.rs         # 多角色對白管理、演員陣容、逐句編輯與靜音拼接引擎
+│   ├── storytelling.rs         # 故事體裁導演系統、QA 審查與智慧自動導演
+│   └── timeline.rs             # CapCut/Filmora 風格視覺化多軌時間軸編輯器與混音引擎
 └── tests/
-    └── integration_tests.rs    # 端到端與邊界情況自動化測試 (13 項測試)
+    └── integration_tests.rs    # 整合測試（不呼叫真實 API）
 ```
 
 ---
@@ -124,3 +137,13 @@ D:/fish-s2pro-tts/
 ## 使用體驗改善
 
 單人配音採「台詞 → 聲音 → 產生與試聽」流程，支援文字匯入／另存與一次復原；進階模型與情緒標籤預設收合。完整修改、限制與人工驗收請見 [UX-REDESIGN](docs/UX-REDESIGN.md)。
+
+## Storytelling / Timeline 整合
+
+故事導演與 QA 放在單人台詞編輯器下的可收合區，保留文字匯入、儲存與一次復原。作品庫音檔、單人生成結果及多角色劇本均可送入時間軸。
+
+- 「將劇本匯入時間軸多軌」建立待生成的角色草稿。
+- 「匯入上次完整混音」保留生成當時的劇本與完整音訊。未提供逐句時間碼，因此不依字數強制切割，也不宣稱聲源分離。
+- 草稿不含音訊，需先生成或靜音其所在軌道，才可混音播放／匯出。
+- 時間軸工作在切換分頁後仍處理完成訊息；生成中保護目的片段，避免重複工作。
+- 時間軸目前是記憶體編輯狀態，尚無工程儲存／復原功能；關閉前請匯出 WAV。實機操作、中文排版與真實 API 仍需人工驗收。

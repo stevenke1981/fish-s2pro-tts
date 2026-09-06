@@ -6,3 +6,5 @@ pub mod file_manager;
 pub mod fonts;
 pub mod models;
 pub mod multi_speech;
+pub mod storytelling;
+pub mod timeline;
