@@ -455,6 +455,13 @@ pub fn scan_output_files(outputs_dir: &Path, history: &[GenerationHistoryItem]) 
     entries
 }
 
+/// 檔案管理頁面動作通知
+#[derive(Clone, Debug, PartialEq)]
+pub enum FileManagerAction {
+    None,
+    SendToTimeline(PathBuf),
+}
+
 /// 繪製語音檔案管理頁面 UI
 pub fn render_file_manager_page(
     ui: &mut egui::Ui,
@@ -462,7 +469,8 @@ pub fn render_file_manager_page(
     history: &mut Vec<GenerationHistoryItem>,
     audio_player: &mut AudioPlayer,
     save_history_fn: &dyn Fn(&[GenerationHistoryItem]),
-) {
+) -> FileManagerAction {
+    let mut send_timeline_file: Option<PathBuf> = None;
     ui.add_space(6.0);
 
     // 提示與錯誤反饋訊息
@@ -807,6 +815,13 @@ pub fn render_file_manager_page(
 
                     ui.add_space(10.0);
 
+                    // 傳送至時間軸按鈕
+                    if let Some(entry) = selected_entry
+                        && ui.button("🎞️ 時間軸").on_hover_text("將目前選取的音訊檔案放入多軌時間軸").clicked()
+                    {
+                        send_timeline_file = Some(entry.path.clone());
+                    }
+
                     // 快速另存
                     if let Some(entry) = selected_entry
                         && ui.button("💾 匯出目前").on_hover_text("另存目前選取的音訊檔案").clicked()
@@ -1073,6 +1088,11 @@ pub fn render_file_manager_page(
                                     export_file_info = Some((item.path.clone(), item.filename.clone(), item.format.to_lowercase()));
                                 }
 
+                                // 傳送至時間軸
+                                if ui.button("🎞️ 時間軸").on_hover_text("將此音檔放置於多軌時間軸編輯").clicked() {
+                                    send_timeline_file = Some(item.path.clone());
+                                }
+
                                 // 刪除按鈕
                                 let del_btn = egui::Button::new(RichText::new("🗑️").color(Color32::from_rgb(239, 68, 68)));
                                 if ui.add(del_btn).on_hover_text("刪除此檔案").clicked() {
@@ -1147,6 +1167,10 @@ pub fn render_file_manager_page(
                 }
             });
     }
+
+    send_timeline_file
+        .map(FileManagerAction::SendToTimeline)
+        .unwrap_or(FileManagerAction::None)
 }
 
 #[cfg(test)]
