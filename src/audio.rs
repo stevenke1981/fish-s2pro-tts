@@ -73,6 +73,7 @@ pub fn estimate_audio_duration_with_size(header_bytes: &[u8], total_file_size: u
 }
 
 pub struct AudioPlayer {
+    device_access_enabled: bool,
     _stream: Option<OutputStream>,
     stream_handle: Option<OutputStreamHandle>,
     sink: Option<Sink>,
@@ -93,17 +94,18 @@ impl Default for AudioPlayer {
 
 impl AudioPlayer {
     pub fn new() -> Self {
-        let (stream, stream_handle) = match OutputStream::try_default() {
-            Ok((s, h)) => (Some(s), Some(h)),
-            Err(e) => {
-                eprintln!("初始化音訊輸出裝置警告: {}", e);
-                (None, None)
-            }
-        };
+        let mut player = Self::new_headless();
+        player.device_access_enabled = true;
+        if let Err(e) = player.reconnect_device() { eprintln!("{}", e); }
+        player
+    }
 
+    /// Device-free player for deterministic decoding, export and state tests.
+    pub fn new_headless() -> Self {
         Self {
-            _stream: stream,
-            stream_handle,
+            device_access_enabled: false,
+            _stream: None,
+            stream_handle: None,
             sink: None,
             volume: 1.0,
             is_paused: false,
@@ -122,6 +124,9 @@ impl AudioPlayer {
 
     /// 重新嘗試連接音訊裝置
     pub fn reconnect_device(&mut self) -> Result<(), String> {
+        if !self.device_access_enabled {
+            return Err("無介面播放器不連接音訊裝置".to_string());
+        }
         match OutputStream::try_default() {
             Ok((s, h)) => {
                 self._stream = Some(s);
@@ -395,7 +400,7 @@ mod tests {
     #[test]
     fn load_without_autoplay_keeps_audio_available_for_export() {
         let bytes = encode_pcm_to_wav(&vec![0; 8000], 8000, 1);
-        let mut player = AudioPlayer::new();
+        let mut player = AudioPlayer::new_headless();
         player.load_bytes(bytes.clone());
         assert_eq!(player.current_bytes(), Some(&bytes));
         assert!(!player.is_playing());
@@ -417,7 +422,7 @@ mod tests {
 
     #[test]
     fn test_audio_player_initialization() {
-        let mut player = AudioPlayer::new();
+        let mut player = AudioPlayer::new_headless();
         assert_eq!(player.get_volume(), 1.0);
         player.set_volume(0.5);
         assert_eq!(player.get_volume(), 0.5);

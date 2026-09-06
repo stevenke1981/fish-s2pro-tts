@@ -114,7 +114,10 @@ pub struct FishTtsApp {
 
 impl FishTtsApp {
     pub fn new(_cc: &eframe::CreationContext) -> Self {
-        Self::new_headless()
+        let mut app = Self::new_headless();
+        app.audio_player = AudioPlayer::new();
+        app.audio_player.set_volume(app.config.volume);
+        app
     }
 
     pub fn new_headless() -> Self {
@@ -133,7 +136,7 @@ impl FishTtsApp {
             .map(|s| s.content.to_string())
             .unwrap_or_else(|| "[calm] 歡迎使用 Fish Audio 語音合成。".to_string());
 
-        let mut audio_player = AudioPlayer::new();
+        let mut audio_player = AudioPlayer::new_headless();
         audio_player.set_volume(config.volume);
 
         // 載入持久化歷史紀錄
@@ -1821,7 +1824,7 @@ mod tests {
             script_qa_issues: None,
             config: AppConfig::default(),
             api_key_visible: false,
-            audio_player: AudioPlayer::new(),
+            audio_player: AudioPlayer::new_headless(),
             status_message: String::new(),
             is_generating: false,
             is_verifying_key: false,

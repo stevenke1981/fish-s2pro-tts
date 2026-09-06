@@ -91,7 +91,7 @@ fn test_config_persistence_and_sanitization() {
 
 #[test]
 fn test_audio_player_state_transitions() {
-    let mut player = AudioPlayer::new();
+    let mut player = AudioPlayer::new_headless();
 
     // 初始狀態
     assert_eq!(player.get_volume(), 1.0);
@@ -177,7 +177,7 @@ fn test_format_speech_input_and_seeking() {
     assert_eq!(unapplied, "純文字測試");
 
     // 4. 音訊播放器 Seek 狀態轉換
-    let mut player = AudioPlayer::new();
+    let mut player = AudioPlayer::new_headless();
     let seek_res = player.seek(std::time::Duration::from_secs(5));
     // 在未載入真實音訊時 seek 應安全失敗或返回錯誤，絕不 panic
     assert!(seek_res.is_err());
