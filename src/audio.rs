@@ -73,6 +73,7 @@ pub fn estimate_audio_duration_with_size(header_bytes: &[u8], total_file_size: u
 }
 
 pub struct AudioPlayer {
+    device_access_enabled: bool,
     _stream: Option<OutputStream>,
     stream_handle: Option<OutputStreamHandle>,
     sink: Option<Sink>,
@@ -93,17 +94,18 @@ impl Default for AudioPlayer {
 
 impl AudioPlayer {
     pub fn new() -> Self {
-        let (stream, stream_handle) = match OutputStream::try_default() {
-            Ok((s, h)) => (Some(s), Some(h)),
-            Err(e) => {
-                eprintln!("初始化音訊輸出裝置警告: {}", e);
-                (None, None)
-            }
-        };
+        let mut player = Self::new_headless();
+        player.device_access_enabled = true;
+        if let Err(e) = player.reconnect_device() { eprintln!("{}", e); }
+        player
+    }
 
+    /// Device-free player for deterministic decoding, export and state tests.
+    pub fn new_headless() -> Self {
         Self {
-            _stream: stream,
-            stream_handle,
+            device_access_enabled: false,
+            _stream: None,
+            stream_handle: None,
             sink: None,
             volume: 1.0,
             is_paused: false,
@@ -122,6 +124,9 @@ impl AudioPlayer {
 
     /// 重新嘗試連接音訊裝置
     pub fn reconnect_device(&mut self) -> Result<(), String> {
+        if !self.device_access_enabled {
+            return Err("無介面播放器不連接音訊裝置".to_string());
+        }
         match OutputStream::try_default() {
             Ok((s, h)) => {
                 self._stream = Some(s);
@@ -132,8 +137,17 @@ impl AudioPlayer {
         }
     }
 
+    /// Load a generated result without requiring a playback device or starting sound.
+    pub fn load_bytes(&mut self, bytes: Vec<u8>) {
+        self.stop();
+        self.total_duration = Decoder::new(Cursor::new(bytes.clone())).ok()
+            .and_then(|d| d.total_duration()).or_else(|| estimate_audio_duration(&bytes));
+        self.current_bytes = Some(bytes);
+    }
+
     /// 播放給定的音訊位元組（MP3 / WAV 等）
     pub fn play_bytes(&mut self, bytes: Vec<u8>) -> Result<(), String> {
+        self.load_bytes(bytes.clone());
         if self.stream_handle.is_none() {
             self.reconnect_device()?;
         }
@@ -363,6 +377,12 @@ pub fn export_audio_bytes(bytes: &[u8], target_path: &std::path::Path) -> Result
 
     let is_source_wav = bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WAVE";
 
+    if target_ext == "mp3" && is_source_wav {
+        return Err("目前不支援將 WAV 編碼為 MP3，請另存為 .wav。".to_string());
+    }
+    if !matches!(target_ext.as_str(), "mp3" | "wav") {
+        return Err("請使用 .mp3 或 .wav 副檔名。".to_string());
+    }
     if target_ext == "wav" && !is_source_wav {
         let (samples, sample_rate, channels) = decode_to_pcm(bytes)?;
         let wav = encode_pcm_to_wav(&samples, sample_rate, channels);
@@ -378,8 +398,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn load_without_autoplay_keeps_audio_available_for_export() {
+        let bytes = encode_pcm_to_wav(&vec![0; 8000], 8000, 1);
+        let mut player = AudioPlayer::new_headless();
+        player.load_bytes(bytes.clone());
+        assert_eq!(player.current_bytes(), Some(&bytes));
+        assert!(!player.is_playing());
+        assert_eq!(player.elapsed(), Duration::ZERO);
+        assert!(player.total_duration().is_some());
+        let replacement = encode_pcm_to_wav(&[1, 2, 3], 8000, 1);
+        player.load_bytes(replacement.clone());
+        assert_eq!(player.current_bytes(), Some(&replacement));
+    }
+
+    #[test]
+    fn wav_export_refuses_misleading_mp3_extension() {
+        let bytes = encode_pcm_to_wav(&[0; 8], 8000, 1);
+        let target = std::env::temp_dir().join(format!("fish-reject-{}.mp3", std::process::id()));
+        let result = export_audio_bytes(&bytes, &target);
+        assert!(result.unwrap_err().contains("不支援"));
+        assert!(!target.exists());
+    }
+
+    #[test]
     fn test_audio_player_initialization() {
-        let mut player = AudioPlayer::new();
+        let mut player = AudioPlayer::new_headless();
         assert_eq!(player.get_volume(), 1.0);
         player.set_volume(0.5);
         assert_eq!(player.get_volume(), 0.5);

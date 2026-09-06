@@ -360,6 +360,30 @@ pub fn get_sample_scripts() -> Vec<SampleScript> {
             content: "[calm] [說故事口吻] 很久很久以前，在森林深處有一座被水晶守護的村莊。[chuckle] 孩子們每天在溪邊歡唱，直到一隻會說話的小狐狸悄悄走進了村口……",
             suggested_character: "慈祥和藹老者",
         },
+        SampleScript {
+            title: "武俠懸疑《風起塞外》",
+            category: "故事體裁",
+            content: "[low voice] [speaking slowly] 夜色沉沉，古道荒草叢生，四下沒有半點人聲。[low voice, dangerously calm] 交出玄鐵令，我留你全屍。[sigh] [calm] 退隱十年，終究還是躲不過這場血雨腥風。[whispering] 寒芒乍現，殘葉落處，風止。",
+            suggested_character: "沉穩磁性青年",
+        },
+        SampleScript {
+            title: "恐怖驚悚《午夜鐘聲》",
+            category: "故事體裁",
+            content: "[low voice] [speaking slowly] [mysterious] 整棟洋房空無一人，但空氣中卻飄著淡淡的潮濕霉味。[whispering] [nervous] 喂……有人在那裡嗎？不要開這種玩笑……[gasp] 咚……午夜十二點的鐘聲，毫無預警地敲響了第一聲。[whispering] [soft voice] 你終於……來陪我了……",
+            suggested_character: "冷酷反派刺客",
+        },
+        SampleScript {
+            title: "睡前童話《星光森林的小狐狸》",
+            category: "故事體裁",
+            content: "[soft voice] [warm] [speaking slowly] 月亮升起來了，柔和的銀光灑在整片安靜的森林上。[soft voice] [sigh] 今天走了一整天，星星看起來好溫暖呀。[warm storyteller tone] 小狐狸蜷縮在厚厚的苔蘚上，慢慢闔上了眼睛。晚安，做個好夢。",
+            suggested_character: "溫柔知性御姐",
+        },
+        SampleScript {
+            title: "奇幻史詩《巨龍王座的誓言》",
+            category: "故事體裁",
+            content: "[warm] [cinematic] [measured pacing] 一千年前沉睡的黑翼，在今日的狂風中再度遮蔽了蒼穹。[low voice] [loud voice] 凡人，汝之血肉，何以抵禦烈焰？[excited] [emphasis] 我們身後就是王國最後的希望，拔劍！為了誓言！",
+            suggested_character: "大氣紀錄片旁白",
+        },
     ]
 }
 

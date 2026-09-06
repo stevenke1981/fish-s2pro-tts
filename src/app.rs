@@ -1,12 +1,18 @@
 use crate::api::{KeyAuthData, OpenRouterClient, SpeechRequest, DEFAULT_MODEL, PRO_MODEL};
 use crate::audio::{estimate_audio_duration, export_audio_bytes, AudioPlayer};
 use crate::config::AppConfig;
-use crate::file_manager::{render_file_manager_page, FileManagerState};
+use crate::file_manager::{render_file_manager_page, FileManagerAction, FileManagerState};
 use crate::models::{
     format_speech_input, get_default_characters, get_sample_scripts, get_tone_tags,
     CharacterPreset, GenerationHistoryItem, SampleScript, ToneCategory, ToneTag,
 };
-use crate::multi_speech::{render_multi_speech_page, MultiSpeechState};
+use crate::multi_speech::{
+    render_multi_speech_page, CastMember, DialogLine, MultiSpeechAction, MultiSpeechState,
+};
+use crate::storytelling::{
+    get_director_tags, get_story_presets, DirectorTag, StoryPreset,
+};
+use crate::timeline::{render_timeline_page, TimelineClip, TimelineState};
 use chrono::Local;
 use eframe::egui;
 use egui::{Color32, RichText, Stroke, Vec2};
@@ -31,6 +37,7 @@ pub enum TagInsertMode {
 pub enum AppTab {
     SingleTts,    // 單人語音生成
     MultiSpeech,  // 多角色對白生成
+    Timeline,     // 多軌時間軸編輯 (CapCut/Filmora風格)
     FileManager,  // 語音檔案管理
 }
 
@@ -55,6 +62,13 @@ pub struct FishTtsApp {
     pub active_tab: AppTab,
     pub file_manager: FileManagerState,
     pub multi_speech: MultiSpeechState,
+    pub timeline: TimelineState,
+
+    // 故事導演與體裁預設
+    pub story_presets: Vec<StoryPreset>,
+    pub selected_story_preset_idx: usize,
+    pub director_tags: Vec<DirectorTag>,
+    pub script_qa_issues: Option<Vec<crate::storytelling::ScriptQaIssue>>,
 
     config: AppConfig,
     api_key_visible: bool,
@@ -70,6 +84,8 @@ pub struct FishTtsApp {
 
     // 輸入區
     input_text: String,
+    previous_text: Option<String>,
+    single_result: Option<(Vec<u8>, String, String, Option<String>)>,
     selected_character_idx: usize,
     auto_apply_character_tag: bool,
     selected_model: String,
@@ -98,6 +114,13 @@ pub struct FishTtsApp {
 
 impl FishTtsApp {
     pub fn new(_cc: &eframe::CreationContext) -> Self {
+        let mut app = Self::new_headless();
+        app.audio_player = AudioPlayer::new();
+        app.audio_player.set_volume(app.config.volume);
+        app
+    }
+
+    pub fn new_headless() -> Self {
         let config = AppConfig::load();
         let (sender, receiver) = channel();
 
@@ -113,7 +136,7 @@ impl FishTtsApp {
             .map(|s| s.content.to_string())
             .unwrap_or_else(|| "[calm] 歡迎使用 Fish Audio 語音合成。".to_string());
 
-        let mut audio_player = AudioPlayer::new();
+        let mut audio_player = AudioPlayer::new_headless();
         audio_player.set_volume(config.volume);
 
         // 載入持久化歷史紀錄
@@ -133,15 +156,23 @@ impl FishTtsApp {
         let mut file_manager = FileManagerState::new();
         file_manager.refresh(Path::new("outputs"), &history);
         let multi_speech = MultiSpeechState::new();
+        let timeline = TimelineState::new();
+        let story_presets = get_story_presets();
+        let director_tags = get_director_tags();
 
         Self {
             active_tab: AppTab::SingleTts,
             file_manager,
             multi_speech,
+            timeline,
+            story_presets,
+            selected_story_preset_idx: 0,
+            director_tags,
+            script_qa_issues: None,
             api_key_visible: false,
             audio_player,
 
-            status_message: "就緒。請輸入 API Key 並點擊產生語音。".to_string(),
+            status_message: "先寫台詞、選擇聲音，再產生語音。音檔會保存在 outputs。".to_string(),
             is_generating: false,
             is_verifying_key: false,
             key_auth_info: None,
@@ -149,6 +180,8 @@ impl FishTtsApp {
             success_toast: None,
 
             input_text: initial_text,
+            previous_text: None,
+            single_result: None,
             selected_character_idx: config.selected_character_index.min(characters.len().saturating_sub(1)),
             auto_apply_character_tag: config.auto_apply_character_tag,
             selected_model: config.model.clone(),
@@ -166,7 +199,7 @@ impl FishTtsApp {
             selected_sample_idx: 0,
 
             history,
-            history_expanded: true,
+            history_expanded: false,
 
             config,
             sender,
@@ -179,6 +212,179 @@ impl FishTtsApp {
         let _ = fs::create_dir_all("outputs");
         if let Ok(json) = serde_json::to_string_pretty(&self.history) {
             let _ = fs::write(HISTORY_FILE_PATH, json);
+        }
+    }
+
+    /// 將當前 Single TTS 產生的語音傳送至時間軸
+    pub fn send_current_audio_to_timeline(&mut self) {
+        if let Some((bytes, char_name, text, voice_id)) = self.single_result.clone() {
+            let clip_id = self.timeline.next_clip_id;
+            self.timeline.next_clip_id += 1;
+            let target_track = self.timeline.ensure_dialogue_track();
+            let color = [59, 130, 246];
+
+            match TimelineClip::new(
+                clip_id,
+                target_track,
+                format!("語音_{}", clip_id),
+                char_name,
+                text,
+                self.timeline.playhead_sec,
+                bytes,
+                None,
+                color,
+            ) {
+                Ok(mut clip) => {
+                    clip.voice_id = voice_id;
+                    self.timeline.clips.push(clip);
+                    self.timeline.selected_clip_id = Some(clip_id);
+                    self.active_tab = AppTab::Timeline;
+                    self.status_message = format!("已將目前語音傳送至時間軸 (軌道 0, {:.1}s 處)！", self.timeline.playhead_sec);
+                    self.success_toast = Some(("語音已成功傳送至時間軸！".to_string(), Instant::now()));
+                }
+                Err(e) => {
+                    self.last_error = Some(format!("傳送至時間軸失敗 (音訊解碼錯誤): {}", e));
+                }
+            }
+        } else {
+            self.last_error = Some("目前沒有可傳送的語音，請先產生語音".to_string());
+        }
+    }
+
+    /// 將多角色對白劇本分軌傳送至時間軸
+    pub fn send_multi_speech_to_timeline(
+        &mut self,
+        cast: Vec<CastMember>,
+        lines: Vec<DialogLine>,
+        composite_bytes: Option<Vec<u8>>,
+    ) {
+        if lines.is_empty() {
+            self.last_error = Some("劇本內容為空，無法傳送至時間軸".to_string());
+            return;
+        }
+
+        // 確保每一位 CastMember 在時間軸上有對應軌道
+        let mut speaker_to_track = std::collections::HashMap::new();
+        for member in &cast {
+            let track_id = if let Some(t) = self.timeline.tracks.iter().find(|t| t.name.contains(&member.name)) {
+                t.id
+            } else {
+                let tid = self.timeline.next_track_id;
+                self.timeline.next_track_id += 1;
+                self.timeline.tracks.push(crate::timeline::TimelineTrack {
+                    id: tid,
+                    name: format!("🎙️ {}", member.name),
+                    track_type: crate::timeline::TrackType::Dialogue,
+                    volume: 1.0,
+                    is_muted: false,
+                    is_solo: false,
+                    color: member.badge_color,
+                    height: 70.0,
+                });
+                tid
+            };
+            speaker_to_track.insert(member.speaker_id, (track_id, member.name.clone(), member.badge_color));
+        }
+
+        if let Some(bytes) = composite_bytes {
+            let track_id = self.timeline.ensure_dialogue_track();
+            let id = self.timeline.next_clip_id;
+            match TimelineClip::new(id, track_id, "完整劇本混音".to_string(),
+                "多角色合成".to_string(), lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n"),
+                self.timeline.playhead_sec, bytes, None, [59, 130, 246]) {
+                Ok(clip) => {
+                    self.timeline.next_clip_id += 1;
+                    self.timeline.clips.push(clip);
+                    self.timeline.selected_clip_id = Some(id);
+                    self.active_tab = AppTab::Timeline;
+                    self.status_message = "已匯入完整混音。來源沒有逐句時間碼，請手動分割，或匯入劇本草稿逐句生成。".to_string();
+                }
+                Err(e) => self.last_error = Some(format!("混音匯入失敗：{}", e)),
+            }
+            return;
+        }
+        let mut curr_sec = self.timeline.playhead_sec;
+
+        for line in &lines {
+            if line.text.trim().is_empty() {
+                continue;
+            }
+
+            let (track_id, spk_name, badge_color) = speaker_to_track
+                .get(&line.speaker_id)
+                .cloned()
+                .unwrap_or_else(|| (self.timeline.ensure_dialogue_track(), format!("Speaker {}", line.speaker_id), [59, 130, 246]));
+
+            let clip_id = self.timeline.next_clip_id;
+            self.timeline.next_clip_id += 1;
+            let clip_name = format!("{}_{}", spk_name, line.id);
+
+            {
+                // 回退至草稿 / 占位片段
+                let char_count = line.text.chars().count();
+                let dur = (char_count as f32 * 0.22).max(1.2);
+                let mut clip = TimelineClip::new_mock(
+                    clip_id,
+                    track_id,
+                    clip_name,
+                    spk_name,
+                    line.text.clone(),
+                    curr_sec,
+                    dur,
+                    badge_color,
+                );
+                if let Some(member) = cast.iter().find(|m| m.speaker_id == line.speaker_id) {
+                    clip.voice_id = member.custom_voice_id.clone();
+                    clip.prompt_tag = Some(member.prompt_tag.clone());
+                    clip.speed = member.speed.clamp(0.5, 2.0);
+                    let tone = if line.tone.trim().is_empty() { &member.default_tone } else { &line.tone };
+                    clip.text = format!("{} {}", tone.trim(), line.text.trim()).trim().to_string();
+                    clip.recalculate_duration();
+                }
+                let placed_duration = clip.duration_sec;
+                self.timeline.clips.push(clip);
+                curr_sec += placed_duration + (line.pause_after_ms as f32 / 1000.0);
+            }
+        }
+
+        self.active_tab = AppTab::Timeline;
+        let real_str = "（草稿模式，需逐句生成音訊）";
+        self.status_message = format!("已將多角色劇本共 {} 句台詞依角色分軌排入時間軸{}！", lines.len(), real_str);
+        self.success_toast = Some((format!("劇本已成功依角色分軌排入時間軸{}！", real_str), Instant::now()));
+    }
+
+    /// 將本地音訊檔案路徑載入時間軸
+    pub fn send_file_path_to_timeline(&mut self, path: &Path) {
+        if let Ok(bytes) = fs::read(path) {
+            let stem = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+            let target_track = self.timeline.ensure_dialogue_track();
+            let clip_id = self.timeline.next_clip_id;
+            self.timeline.next_clip_id += 1;
+
+            match TimelineClip::new(
+                clip_id,
+                target_track,
+                stem,
+                "本地檔案".to_string(),
+                String::new(),
+                self.timeline.playhead_sec,
+                bytes,
+                Some(path.to_string_lossy().to_string()),
+                [16, 185, 129],
+            ) {
+                Ok(clip) => {
+                    self.timeline.clips.push(clip);
+                    self.timeline.selected_clip_id = Some(clip_id);
+                    self.active_tab = AppTab::Timeline;
+                    self.status_message = format!("已成功將檔案 {} 載入至時間軸！", path.display());
+                    self.success_toast = Some(("檔案已成功放入時間軸！".to_string(), Instant::now()));
+                }
+                Err(e) => {
+                    self.last_error = Some(format!("加入時間軸失敗 (解碼錯誤): {}", e));
+                }
+            }
+        } else {
+            self.last_error = Some(format!("無法讀取檔案: {}", path.display()));
         }
     }
 
@@ -205,6 +411,9 @@ impl FishTtsApp {
 
     /// 觸發非同步語音生成
     fn start_generation(&mut self) {
+        if self.timeline.is_busy() || self.is_generating || self.multi_speech.is_generating || self.multi_speech.preview_line_id.is_some() {
+            return;
+        }
         let key = self.config.api_key.trim().to_string();
         if key.is_empty() {
             self.last_error = Some("請先填寫 OpenRouter API Key".to_string());
@@ -236,7 +445,8 @@ impl FishTtsApp {
         // 決定模型
         let model = if self.selected_model == "custom" {
             if self.custom_model_input.trim().is_empty() {
-                DEFAULT_MODEL.to_string()
+                self.last_error = Some("請填寫自訂模型識別碼，或選擇預設模型。".to_string());
+                return;
             } else {
                 self.custom_model_input.trim().to_string()
             }
@@ -281,7 +491,7 @@ impl FishTtsApp {
                     let output_path = PathBuf::from("outputs").join(&filename);
                     let file_path_str = output_path.to_string_lossy().to_string();
 
-                    let _ = fs::write(&output_path, &bytes);
+                    // The UI completion handler saves bytes and reports write failures.
 
                     // 估算時長 (優先讀取解碼器，備用位元率估算)
                     let duration_secs = rodio::Decoder::new(std::io::Cursor::new(bytes.clone()))
@@ -335,11 +545,11 @@ impl FishTtsApp {
     /// 另存目前音訊
     fn export_current_audio(&mut self) {
         if let Some(bytes) = self.audio_player.current_bytes().cloned() {
-            let ext = &self.selected_format;
+            let ext = if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WAVE") { "wav" } else { "mp3" };
             let default_name = format!("fish_audio_{}.{}", Local::now().format("%Y%m%d_%H%M%S"), ext);
             if let Some(path) = rfd::FileDialog::new()
                 .set_file_name(&default_name)
-                .add_filter("Audio File", &[ext.as_str(), "mp3", "wav"])
+                .add_filter("Audio File", &[ext, "wav"])
                 .save_file()
             {
                 if let Err(e) = export_audio_bytes(&bytes, &path) {
@@ -373,14 +583,16 @@ impl FishTtsApp {
     }
 
     /// 開啟輸出資料夾
-    fn open_output_dir(&self) {
+    fn open_output_dir(&mut self) {
         let dir = std::env::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
             .join("outputs");
         let _ = fs::create_dir_all(&dir);
-        let _ = std::process::Command::new("explorer.exe")
-            .arg(&dir)
-            .spawn();
+        let opener = if cfg!(target_os = "windows") { "explorer.exe" }
+            else if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+        if let Err(e) = std::process::Command::new(opener).arg(&dir).spawn() {
+            self.last_error = Some(format!("無法開啟資料夾 {}：{}", dir.display(), e));
+        }
     }
 
     /// 處理非同步訊息
@@ -420,6 +632,8 @@ impl FishTtsApp {
                     file_path,
                     duration_secs,
                 } => {
+                    let was_single = self.is_generating;
+                    let was_multi = self.multi_speech.is_generating && self.multi_speech.preview_line_id.is_none();
                     self.is_generating = false;
                     self.multi_speech.is_generating = false;
                     self.multi_speech.preview_line_id = None;
@@ -438,13 +652,28 @@ impl FishTtsApp {
                                 format!("語音生成成功！大小: {:.1} KB ({})", size_kb, dur_str);
                             self.multi_speech.success_toast =
                                 Some("語音合成完成！".to_string());
-                            self.multi_speech.last_generated_bytes = Some(bytes.clone());
-                            if !file_path.is_empty() {
-                                self.multi_speech.last_generated_path = Some(file_path.clone());
+                            if was_single {
+                                self.single_result = Some((bytes.clone(), character_name.clone(), req.input.clone(), req.voice.clone()));
+                            }
+                            if was_multi {
+                                self.multi_speech.last_generated_bytes = Some(bytes.clone());
+                                self.multi_speech.last_generated_path = if file_path.is_empty() { None } else { Some(file_path.clone()) };
                             }
 
-                            // 新增至歷史紀錄並儲存 (若有產出實體音訊檔)
-                            if !file_path.is_empty() {
+                            // Keep generated bytes available even when saving or playback fails.
+                            let save_result = if file_path.is_empty() { Ok(()) } else {
+                                fs::create_dir_all("outputs").and_then(|_| fs::write(&file_path, &bytes))
+                            };
+                            if let Err(e) = &save_result {
+                                self.status_message = "語音已生成，但尚未儲存；請使用另存音檔。".to_string();
+                                self.last_error = Some(format!("儲存失敗：{}。音訊仍保留於播放器，請另存至可寫入的位置。", e));
+                                self.success_toast = None;
+                                self.multi_speech.last_generated_path = None;
+                                self.multi_speech.status_message = self.status_message.clone();
+                                self.multi_speech.error_message = self.last_error.clone();
+                                self.multi_speech.success_toast = None;
+                            }
+                            if !file_path.is_empty() && save_result.is_ok() {
                                 let item_id = Local::now().format("%Y%m%d_%H%M%S").to_string();
                                 let format_ext = if file_path.ends_with(".wav") { "wav".to_string() } else { "mp3".to_string() };
                                 let history_item = GenerationHistoryItem {
@@ -467,9 +696,11 @@ impl FishTtsApp {
                                 self.file_manager.refresh(Path::new("outputs"), &self.history);
                             }
 
-                            // 若啟動自動播放
+                            self.audio_player.load_bytes(bytes.clone());
                             if self.config.auto_play {
-                                let _ = self.audio_player.play_bytes(bytes);
+                                if let Err(e) = self.audio_player.play_bytes(bytes) {
+                                    self.last_error = Some(format!("{}；{}。仍可另存音檔。", self.status_message, e));
+                                }
                             }
                         }
                         Err(e) => {
@@ -484,56 +715,52 @@ impl FishTtsApp {
     }
 }
 
+impl Default for FishTtsApp {
+    fn default() -> Self {
+        Self::new_headless()
+    }
+}
+
 impl eframe::App for FishTtsApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_async_messages();
+        self.timeline.external_generation_busy = self.is_generating || self.multi_speech.is_generating;
+        self.timeline.poll_worker_messages();
+        if self.active_tab != AppTab::Timeline && self.timeline.is_playing {
+            self.timeline.pause_playback(&mut self.audio_player);
+        }
 
         // 檢查如果有進行中的播放，保持每幀重繪更新進度條
-        if self.audio_player.is_playing() {
+        if self.timeline.is_busy() || self.audio_player.is_playing() || self.is_generating || self.is_verifying_key
+            || self.multi_speech.is_generating || self.multi_speech.preview_line_id.is_some()
+            || self.success_toast.as_ref().is_some_and(|(_, t)| t.elapsed().as_secs() < 5) {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
 
         // ======================= 頂部標題列 =======================
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
             ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                ui.heading(RichText::new("🐟 Fish Audio S2.1 Pro TTS Studio").strong());
-
-                ui.add_space(8.0);
-
-                // 免費模型標記 Pill
-                let pill_color = if self.selected_model.contains(":free") {
-                    Color32::from_rgb(16, 185, 129) // Emerald green
-                } else {
-                    Color32::from_rgb(245, 158, 11) // Amber
-                };
-
-                ui.label(
-                    RichText::new(format!("● {}", self.selected_model))
-                        .size(12.0)
-                        .color(pill_color)
-                        .background_color(Color32::from_rgba_premultiplied(
-                            pill_color.r(),
-                            pill_color.g(),
-                            pill_color.b(),
-                            32,
-                        )),
-                );
-
-                ui.add_space(16.0);
-
+            ui.horizontal_wrapped(|ui| {
+                ui.heading(RichText::new("Fish 語音工作室").strong());
+                ui.add_space(12.0);
                 // 頁面切換分頁
                 let is_single = self.active_tab == AppTab::SingleTts;
-                if ui.selectable_label(is_single, "🎙️ 單人語音生成").clicked() {
+                if ui.selectable_label(is_single, "單人配音").clicked() {
                     self.active_tab = AppTab::SingleTts;
                 }
 
                 let is_multi = self.active_tab == AppTab::MultiSpeech;
-                if ui.selectable_label(is_multi, "👥 多角色對白生成").clicked() {
+                if ui.selectable_label(is_multi, "多角色劇本").clicked() {
                     self.active_tab = AppTab::MultiSpeech;
                 }
 
-                let files_label = format!("📁 語音檔案管理 ({})", self.file_manager.files.len());
+                let is_timeline = self.active_tab == AppTab::Timeline;
+                let timeline_label = format!("時間軸 ({})", self.timeline.clips.len());
+                if ui.selectable_label(is_timeline, timeline_label).clicked() {
+                    self.active_tab = AppTab::Timeline;
+                }
+
+                let files_label = format!("作品庫 ({})", self.file_manager.files.len());
                 let is_files = self.active_tab == AppTab::FileManager;
                 if ui.selectable_label(is_files, files_label).clicked() {
                     self.active_tab = AppTab::FileManager;
@@ -566,7 +793,7 @@ impl eframe::App for FishTtsApp {
         });
 
         // ======================= 底部狀態與歷史紀錄 =======================
-        if self.active_tab != AppTab::FileManager {
+        if self.active_tab != AppTab::FileManager && self.active_tab != AppTab::Timeline {
             egui::TopBottomPanel::bottom("bottom_bar")
                 .resizable(true)
                 .min_height(36.0)
@@ -597,10 +824,7 @@ impl eframe::App for FishTtsApp {
                         if ui.button("📁 開啟輸出資料夾").clicked() {
                             self.open_output_dir();
                         }
-                        if !self.history.is_empty() && ui.button("🗑️ 清空歷史").clicked() {
-                            self.history.clear();
-                            self.save_history();
-                        }
+
                     });
                 });
 
@@ -679,10 +903,11 @@ impl eframe::App for FishTtsApp {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.add_space(8.0);
 
-                    // 1. OpenRouter API Key 設定卡片
-                    egui::Frame::group(ui.style())
-                        .corner_radius(8)
-                        .inner_margin(12.0)
+                    ui.heading("2 · 聲音設定");
+                    ui.label("選擇角色與語速；進階設定可稍後調整。");
+                    ui.add_space(8.0);
+                    egui::CollapsingHeader::new("連線設定 · OpenRouter")
+                        .default_open(self.config.api_key.trim().is_empty())
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.strong("🔑 OpenRouter API Key");
@@ -698,14 +923,15 @@ impl eframe::App for FishTtsApp {
                             let text_edit = egui::TextEdit::singleline(&mut self.config.api_key)
                                 .password(!self.api_key_visible)
                                 .hint_text("sk-or-v1-...");
-                            if ui.add(text_edit).changed() && self.config.remember_api_key {
-                                let _ = self.config.save();
+                            if ui.add(text_edit).changed() {
+                                self.key_auth_info = None;
+                                if self.config.remember_api_key { let _ = self.config.save(); }
                             }
 
                             ui.add_space(6.0);
                             ui.horizontal(|ui| {
                                 if ui
-                                    .checkbox(&mut self.config.remember_api_key, "本機記憶 Key")
+                                    .checkbox(&mut self.config.remember_api_key, "記住金鑰（本機明文儲存）")
                                     .changed()
                                 {
                                     let _ = self.config.save();
@@ -758,10 +984,8 @@ impl eframe::App for FishTtsApp {
 
                     ui.add_space(10.0);
 
-                    // 2. 模型選擇卡片
-                    egui::Frame::group(ui.style())
-                        .corner_radius(8)
-                        .inner_margin(12.0)
+                    egui::CollapsingHeader::new("進階 · 模型選擇")
+                        .default_open(false)
                         .show(ui, |ui| {
                             ui.strong("🤖 TTS 模型選擇");
                             ui.add_space(4.0);
@@ -968,9 +1192,11 @@ impl eframe::App for FishTtsApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             match self.active_tab {
                 AppTab::SingleTts => {
-                    self.render_single_tts_view(ui);
+                    egui::ScrollArea::vertical().id_salt("single_workspace")
+                        .show(ui, |ui| self.render_single_tts_view(ui));
                 }
                 AppTab::MultiSpeech => {
+                    let action = ui.add_enabled_ui(!self.is_generating && !self.timeline.is_busy(), |ui| {
                     render_multi_speech_page(
                         ui,
                         &mut self.multi_speech,
@@ -978,7 +1204,17 @@ impl eframe::App for FishTtsApp {
                         &self.config.api_key,
                         &mut self.audio_player,
                         self.sender.clone(),
-                    );
+                    )
+                    }).inner;
+                    if let MultiSpeechAction::SendToTimeline { cast, lines, composite_bytes } = action {
+                        self.send_multi_speech_to_timeline(cast, lines, composite_bytes);
+                    }
+                }
+                AppTab::Timeline => {
+                    ui.add_enabled_ui(!self.is_generating && !self.multi_speech.is_generating, |ui| {
+                        render_timeline_page(ui, &mut self.timeline, &self.characters,
+                            &self.config.api_key, &mut self.audio_player);
+                    });
                 }
                 AppTab::FileManager => {
                     let save_fn = |items: &[GenerationHistoryItem]| {
@@ -987,13 +1223,16 @@ impl eframe::App for FishTtsApp {
                             let _ = fs::write(HISTORY_FILE_PATH, json);
                         }
                     };
-                    render_file_manager_page(
+                    let action = render_file_manager_page(
                         ui,
                         &mut self.file_manager,
                         &mut self.history,
                         &mut self.audio_player,
                         &save_fn,
                     );
+                    if let FileManagerAction::SendToTimeline(path) = action {
+                        self.send_file_path_to_timeline(&path);
+                    }
                 }
             }
         });
@@ -1001,6 +1240,124 @@ impl eframe::App for FishTtsApp {
 }
 
 impl FishTtsApp {
+    fn render_story_tools(&mut self, ui: &mut egui::Ui) {
+        egui::CollapsingHeader::new("故事導演與劇本檢查（選用）")
+            .default_open(false).show(ui, |ui| {
+                ui.label("依本機規則提供演繹建議；不會呼叫 AI 分析故事。");
+                ui.horizontal_wrapped(|ui| {
+// 故事體裁預設 (源自 fish-audio-s2.1-pro-storytelling)
+                        egui::ComboBox::from_id_salt("story_preset_combo")
+                            .selected_text(
+                                self.story_presets
+                                    .get(self.selected_story_preset_idx)
+                                    .map(|p| p.name.as_str())
+                                    .unwrap_or("故事體裁"),
+                            )
+                            .show_ui(ui, |ui| {
+                                for (idx, preset) in self.story_presets.iter().enumerate() {
+                                    if ui
+                                        .selectable_value(&mut self.selected_story_preset_idx, idx, &preset.name)
+                                        .clicked()
+                                    {
+                                        self.speed = preset.recommended_speed;
+                                        self.config.speed = self.speed;
+                                        let _ = self.config.save();
+                                    }
+                                }
+                            });
+
+                        if let Some(preset) = self.story_presets.get(self.selected_story_preset_idx).cloned() {
+                            if ui.button("✨ 套用體裁導演標籤").on_hover_text("將此體裁之導演標籤插入台詞開頭").clicked() {
+                                let tags_str = preset.base_tags.iter().map(|t| format!("[{}]", t)).collect::<Vec<_>>().join("");
+                                self.previous_text = Some(self.input_text.clone());
+                                self.input_text = format!("{} {}", tags_str, self.input_text);
+                                self.script_qa_issues = None;
+                            }
+
+                            if ui
+                                .button(RichText::new("🎭 自動加入導演建議").strong())
+                                .on_hover_text("依體裁、引號與標點規則加入演繹建議；套用後可復原")
+                                .clicked()
+                            {
+                                let directed = crate::storytelling::auto_direct_story(&self.input_text, &preset);
+                                if !directed.is_empty() {
+                                    let mut new_text = String::new();
+                                    for line in &directed {
+                                        let tag_str = line.tags.iter().map(|t| format!("[{}]", t)).collect::<Vec<_>>().join(" ");
+                                        if !tag_str.is_empty() {
+                                            new_text.push_str(&tag_str);
+                                            new_text.push(' ');
+                                        }
+                                        new_text.push_str(&line.text);
+                                        new_text.push('\n');
+                                    }
+                                    self.previous_text = Some(self.input_text.clone());
+                                    self.input_text = new_text.trim().to_string();
+                                    let issues = crate::storytelling::qa_check_story_script(&directed);
+                                    self.script_qa_issues = Some(issues);
+                                }
+                            }
+
+                            if ui
+                                .button("🔍 劇本 QA 審查")
+                                .on_hover_text("審查台詞長度、情緒強度平衡、標籤格式與 Fish Audio 演繹標準")
+                                .clicked()
+                            {
+                                let lines = crate::storytelling::parse_story_script(&self.input_text);
+                                let issues = crate::storytelling::qa_check_story_script(&lines);
+                                self.script_qa_issues = Some(issues);
+                            }
+                        }
+
+                                        });
+// 劇本 QA 審查診斷報告卡片
+                    if let Some(issues) = &self.script_qa_issues {
+                        ui.add_space(8.0);
+                        let mut dismiss_qa = false;
+                        egui::Frame::group(ui.style())
+                            .corner_radius(8)
+                            .inner_margin(10.0)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    if issues.is_empty() {
+                                        ui.strong(RichText::new("✓ 靜態檢查未發現問題；實際演繹效果仍需試聽。").color(Color32::from_rgb(34, 197, 94)));
+                                    } else {
+                                        ui.strong(RichText::new(format!("🔍 劇本 QA 審查診斷報告 (發現 {} 項問題/建議)", issues.len())).color(Color32::from_rgb(245, 158, 11)));
+                                    }
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if ui.small_button("✕ 關閉報告").clicked() {
+                                            dismiss_qa = true;
+                                        }
+                                    });
+                                });
+
+                                if !issues.is_empty() {
+                                    ui.add_space(4.0);
+                                    for issue in issues {
+                                        let c = issue.severity.color();
+                                        ui.horizontal(|ui| {
+                                            ui.label(
+                                                RichText::new(format!("[{}]", issue.severity.label()))
+                                                    .color(Color32::from_rgb(c[0], c[1], c[2]))
+                                                    .strong(),
+                                            );
+                                            ui.label(format!("第 {} 行:", issue.line_index + 1));
+                                            ui.label(&issue.message);
+                                            ui.label(
+                                                RichText::new(format!("(建議: {})", issue.suggested_fix))
+                                                    .color(Color32::from_rgb(148, 163, 184)),
+                                            );
+                                        });
+                                    }
+                                }
+                            });
+                        if dismiss_qa {
+                            self.script_qa_issues = None;
+                        }
+                    }
+            });
+    }
+
     fn render_single_tts_view(&mut self, ui: &mut egui::Ui) {
         // 錯誤訊息提示條
             let mut dismiss_error = false;
@@ -1027,10 +1384,103 @@ impl FishTtsApp {
                 self.last_error = None;
             }
 
-            // 1. 口氣與情緒標籤區 (Tone Tags)
+            ui.heading("讓文字成為聲音");
+            ui.label("1 寫台詞　→　2 選擇左側聲音　→　3 產生、試聽與匯出");
+            if self.config.api_key.trim().is_empty() {
+                ui.label("開始前，請在左側「連線設定」填入 OpenRouter API Key。");
+            }
+            ui.add_space(12.0);
+            // 2. 台詞編輯區
             egui::Frame::group(ui.style())
                 .corner_radius(8)
                 .inner_margin(12.0)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.strong("1 · 台詞內容");
+
+                        // 快速載入示範腳本
+                        egui::ComboBox::from_id_salt("sample_script_combo")
+                            .selected_text(
+                                self.sample_scripts
+                                    .get(self.selected_sample_idx)
+                                    .map(|s| s.title)
+                                    .unwrap_or("快速範例"),
+                            )
+                            .show_ui(ui, |ui| {
+                                for (idx, sample) in self.sample_scripts.iter().enumerate() {
+                                    if ui
+                                        .selectable_value(&mut self.selected_sample_idx, idx, sample.title)
+                                        .clicked()
+                                    {
+                                        self.previous_text = Some(self.input_text.clone());
+                                        self.input_text = sample.content.to_string();
+                                        // 自動配對推薦角色
+                                        if let Some(c_idx) = self
+                                            .characters
+                                            .iter()
+                                            .position(|c| c.name.contains(sample.suggested_character))
+                                        {
+                                            self.selected_character_idx = c_idx;
+                                            self.speed = self.characters[c_idx].recommended_speed;
+                                            self.config.selected_character_index = c_idx;
+                                            self.config.speed = self.speed;
+                                            let _ = self.config.save();
+                                        }
+                                    }
+                                }
+                            });
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button("🗑️ 清空文字").clicked() {
+                                self.previous_text = Some(std::mem::take(&mut self.input_text));
+                            }
+                            let count = self.input_text.chars().count();
+                            ui.label(
+                                RichText::new(format!("字數: {}", count))
+                                    .size(11.5)
+                                    .color(Color32::from_rgb(156, 163, 175)),
+                            );
+                        });
+                    });
+
+                    ui.add_space(6.0);
+
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.button("匯入文字…").clicked() {
+                            if let Some(path) = rfd::FileDialog::new().add_filter("UTF-8 文字", &["txt", "md"]).pick_file() {
+                                match fs::read_to_string(&path) {
+                                    Ok(text) => {
+                                        self.previous_text = Some(std::mem::replace(&mut self.input_text, text.trim_start_matches('\u{feff}').to_string()));
+                                    }
+                                    Err(e) => self.last_error = Some(format!("無法讀取文字：{}。請使用 UTF-8 編碼。", e)),
+                                }
+                            }
+                        }
+                        if ui.button("儲存台詞…").clicked() {
+                            if let Some(path) = rfd::FileDialog::new().set_file_name("台詞.txt").save_file() {
+                                match fs::write(path, &self.input_text) {
+                                    Ok(()) => self.success_toast = Some(("台詞已儲存".to_string(), Instant::now())),
+                                    Err(e) => self.last_error = Some(format!("台詞儲存失敗：{}", e)),
+                                }
+                            }
+                        }
+                        if ui.add_enabled(self.previous_text.is_some(), egui::Button::new("復原替換／清空")).clicked() {
+                            if let Some(text) = self.previous_text.take() { self.input_text = text; }
+                        }
+                    });
+                    let multiline = egui::TextEdit::multiline(&mut self.input_text)
+                        .desired_rows(12)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("貼上你想朗讀的文字。需要情緒變化時，可展開下方「加入情緒與語氣」。");
+                    if ui.add(multiline).changed() { self.script_qa_issues = None; }
+                    self.render_story_tools(ui);
+                });
+
+            ui.add_space(12.0);
+
+            // 1. 口氣與情緒標籤區 (Tone Tags)
+            egui::CollapsingHeader::new("加入情緒與語氣（選用）")
+                .default_open(false)
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.strong("✨ 語氣與對白標籤 (點擊直接插入台詞)");
@@ -1068,7 +1518,7 @@ impl FishTtsApp {
 
                     // 分類切換按鈕
                     ui.horizontal_wrapped(|ui| {
-                        let categories = ["全部", "基礎情緒", "副語言動作", "風格語氣", "多角色對白", "自訂口氣"];
+                        let categories = ["全部", "基礎情緒", "副語言動作", "風格語氣", "多角色對白", "故事導演標籤", "自訂口氣"];
                         for (idx, cat_name) in categories.iter().enumerate() {
                             if ui
                                 .selectable_label(self.selected_tone_category == idx, *cat_name)
@@ -1093,7 +1543,7 @@ impl FishTtsApp {
                             _ => None,
                         };
 
-                        if self.selected_tone_category != 5 {
+                        if self.selected_tone_category != 5 && self.selected_tone_category != 6 {
                             for tag_item in &self.tone_tags {
                                 if filter_category.is_none()
                                     || filter_category.as_ref() == Some(&tag_item.category)
@@ -1107,8 +1557,22 @@ impl FishTtsApp {
                             }
                         }
 
-                        // 自訂口氣標籤輸入
+                        // 故事導演標籤 (源自 fish-audio-s2.1-pro-storytelling)
                         if self.selected_tone_category == 0 || self.selected_tone_category == 5 {
+                            for d_tag in &self.director_tags {
+                                let c = d_tag.intensity.color();
+                                let btn = egui::Button::new(format!("{} {}", d_tag.tag, d_tag.label))
+                                    .corner_radius(4)
+                                    .fill(Color32::from_rgba_premultiplied(c[0], c[1], c[2], 50));
+                                let tip = format!("【{}】範例: {}\n強度: {}", d_tag.category, d_tag.example, d_tag.intensity.label());
+                                if ui.add(btn).on_hover_text(tip).clicked() {
+                                    clicked_tag = Some(d_tag.tag.clone());
+                                }
+                            }
+                        }
+
+                        // 自訂口氣標籤輸入
+                        if self.selected_tone_category == 0 || self.selected_tone_category == 6 {
                             for custom in &self.config.custom_tones {
                                 let btn = egui::Button::new(custom)
                                     .corner_radius(4);
@@ -1151,80 +1615,24 @@ impl FishTtsApp {
 
             ui.add_space(10.0);
 
-            // 2. 台詞編輯區
-            egui::Frame::group(ui.style())
-                .corner_radius(8)
-                .inner_margin(12.0)
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.strong("📝 角色文字台詞");
-
-                        // 快速載入示範腳本
-                        egui::ComboBox::from_id_salt("sample_script_combo")
-                            .selected_text(
-                                self.sample_scripts
-                                    .get(self.selected_sample_idx)
-                                    .map(|s| s.title)
-                                    .unwrap_or("快速範例"),
-                            )
-                            .show_ui(ui, |ui| {
-                                for (idx, sample) in self.sample_scripts.iter().enumerate() {
-                                    if ui
-                                        .selectable_value(&mut self.selected_sample_idx, idx, sample.title)
-                                        .clicked()
-                                    {
-                                        self.input_text = sample.content.to_string();
-                                        // 自動配對推薦角色
-                                        if let Some(c_idx) = self
-                                            .characters
-                                            .iter()
-                                            .position(|c| c.name.contains(sample.suggested_character))
-                                        {
-                                            self.selected_character_idx = c_idx;
-                                            self.speed = self.characters[c_idx].recommended_speed;
-                                            self.config.selected_character_index = c_idx;
-                                            self.config.speed = self.speed;
-                                            let _ = self.config.save();
-                                        }
-                                    }
-                                }
-                            });
-
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("🗑️ 清空文字").clicked() {
-                                self.input_text.clear();
-                            }
-                            let count = self.input_text.chars().count();
-                            ui.label(
-                                RichText::new(format!("字數: {}", count))
-                                    .size(11.5)
-                                    .color(Color32::from_rgb(156, 163, 175)),
-                            );
-                        });
-                    });
-
-                    ui.add_space(6.0);
-
-                    let multiline = egui::TextEdit::multiline(&mut self.input_text)
-                        .desired_rows(6)
-                        .desired_width(f32::INFINITY)
-                        .hint_text("在此輸入需要朗讀的台詞，可自由混合 [happy]、[whispering]、<|speaker:0|> 等標籤以獲得生動口氣！");
-                    ui.add(multiline);
-                });
-
-            ui.add_space(12.0);
-
             // 3. 語音生成操作與內建播放器
             egui::Frame::group(ui.style())
                 .corner_radius(8)
                 .inner_margin(14.0)
                 .show(ui, |ui| {
-                    ui.horizontal(|ui| {
+                    ui.strong("3 · 產生與試聽");
+                    ui.label(format!("模型：{}　·　{}　·　{:.2}x", if self.selected_model == "custom" { &self.custom_model_input } else { &self.selected_model }, self.selected_format.to_uppercase(), self.speed));
+                    if self.timeline.is_busy() || self.is_generating || self.multi_speech.is_generating || self.multi_speech.preview_line_id.is_some() {
+                        ui.label("正在處理語音工作，完成後即可再次產生。請勿關閉視窗。");
+                    } else if self.config.api_key.trim().is_empty() || self.input_text.trim().is_empty() {
+                        ui.label("請先填寫連線金鑰與台詞，才能產生語音。");
+                    }
+                    ui.horizontal_wrapped(|ui| {
                         // 產生按鈕
                         let gen_btn_text = if self.is_generating {
-                            "🎙️ 正在產生語音中..."
+                            "正在產生語音…"
                         } else {
-                            "🎙️ 立即產生語音 (S2.1 Pro)"
+                            "產生語音"
                         };
 
                         let gen_btn = egui::Button::new(RichText::new(gen_btn_text).size(16.0).strong())
@@ -1232,7 +1640,7 @@ impl FishTtsApp {
                             .min_size(Vec2::new(240.0, 42.0))
                             .corner_radius(6);
 
-                        if ui.add_enabled(!self.is_generating, gen_btn).clicked() {
+                        if ui.add_enabled(!self.timeline.is_busy() && !self.is_generating && !self.multi_speech.is_generating && self.multi_speech.preview_line_id.is_none() && !self.config.api_key.trim().is_empty() && !self.input_text.trim().is_empty(), gen_btn).clicked() {
                             self.start_generation();
                         }
 
@@ -1261,7 +1669,7 @@ impl FishTtsApp {
                             } else if is_paused {
                                 self.audio_player.resume();
                             } else {
-                                let _ = self.audio_player.replay();
+                                if let Err(e) = self.audio_player.replay() { self.last_error = Some(e); }
                             }
                         }
 
@@ -1282,7 +1690,7 @@ impl FishTtsApp {
                             )
                             .clicked()
                         {
-                            let _ = self.audio_player.replay();
+                            if let Err(e) = self.audio_player.replay() { self.last_error = Some(e); }
                         }
 
                         // 另存音檔
@@ -1294,6 +1702,20 @@ impl FishTtsApp {
                             .clicked()
                         {
                             self.export_current_audio();
+                        }
+
+                        // 傳送至多軌時間軸
+                        if ui
+                            .add_enabled(
+                                self.single_result.is_some(),
+                                egui::Button::new(RichText::new("🎞️ 傳送至時間軸").strong())
+                                    .fill(Color32::from_rgb(16, 185, 129))
+                                    .min_size(Vec2::new(115.0, 36.0)),
+                            )
+                            .on_hover_text("將剛剛產生的語音片段直接傳送至多軌時間軸進行編輯！")
+                            .clicked()
+                        {
+                            self.send_current_audio_to_timeline();
                         }
                     });
 
@@ -1348,6 +1770,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn timeline_transfer_uses_generated_single_snapshot_not_shared_playback() {
+        let mut app = FishTtsApp::new_headless();
+        let original = crate::audio::encode_pcm_to_wav(&[100; 800], 8000, 1);
+        app.single_result = Some((original.clone(), "原角色".into(), "原台詞".into(), Some("voice-example".into())));
+        app.input_text = "已修改的台詞".into();
+        app.audio_player.load_bytes(crate::audio::encode_pcm_to_wav(&[200; 800], 8000, 1));
+        app.timeline.tracks.clear();
+        app.send_current_audio_to_timeline();
+        let clip = app.timeline.clips.last().unwrap();
+        assert_eq!(clip.text, "原台詞");
+        assert_eq!(clip.speaker, "原角色");
+        assert_eq!(clip.voice_id.as_deref(), Some("voice-example"));
+        assert_eq!(clip.audio_bytes.as_ref(), Some(&original));
+        assert!(app.timeline.tracks.iter().any(|t| t.id == clip.track_id));
+    }
+
+    #[test]
+    fn single_completion_does_not_overwrite_multi_mix() {
+        let mut app = FishTtsApp::new_headless();
+        app.config.auto_play = false;
+        app.is_generating = true;
+        let previous = crate::audio::encode_pcm_to_wav(&[200; 800], 8000, 1);
+        app.multi_speech.last_generated_bytes = Some(previous.clone());
+        let bytes = crate::audio::encode_pcm_to_wav(&[100; 800], 8000, 1);
+        app.sender.send(WorkerMessage::SpeechGenerated {
+            result: Ok(bytes.clone()), req: SpeechRequest { model: DEFAULT_MODEL.into(),
+                input: "測試".into(), voice: None, response_format: Some("wav".into()), speed: Some(1.0) },
+            character_name: "旁白".into(), file_path: String::new(), duration_secs: None,
+        }).unwrap();
+        app.handle_async_messages();
+        assert_eq!(app.multi_speech.last_generated_bytes, Some(previous));
+        assert_eq!(app.single_result.unwrap().0, bytes);
+    }
+
+    #[test]
     fn test_app_creation() {
         let config = AppConfig::default();
         assert_eq!(config.model, DEFAULT_MODEL);
@@ -1360,9 +1817,14 @@ mod tests {
             active_tab: AppTab::SingleTts,
             file_manager: FileManagerState::new(),
             multi_speech: MultiSpeechState::new(),
+            timeline: TimelineState::new(),
+            story_presets: get_story_presets(),
+            selected_story_preset_idx: 0,
+            director_tags: get_director_tags(),
+            script_qa_issues: None,
             config: AppConfig::default(),
             api_key_visible: false,
-            audio_player: AudioPlayer::new(),
+            audio_player: AudioPlayer::new_headless(),
             status_message: String::new(),
             is_generating: false,
             is_verifying_key: false,
@@ -1370,6 +1832,8 @@ mod tests {
             last_error: None,
             success_toast: None,
             input_text: "這是內文。".to_string(),
+            previous_text: None,
+            single_result: None,
             selected_character_idx: 0,
             auto_apply_character_tag: true,
             selected_model: DEFAULT_MODEL.to_string(),
