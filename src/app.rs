@@ -1474,8 +1474,18 @@ impl FishTtsApp {
                     });
                     ui.horizontal_wrapped(|ui| {
                         ui.strong("快捷標籤");
+                        let previous_mode = self.tag_insert_mode;
                         ui.selectable_value(&mut self.tag_insert_mode, TagInsertMode::Prepend, "插入開頭");
                         ui.selectable_value(&mut self.tag_insert_mode, TagInsertMode::Append, "追加末尾");
+                        if self.tag_insert_mode != previous_mode {
+                            self.config.tag_insert_mode = match self.tag_insert_mode {
+                                TagInsertMode::Prepend => "prepend",
+                                TagInsertMode::Append => "append",
+                            }.to_string();
+                            if let Err(error) = self.config.save() {
+                                self.last_error = Some(format!("無法儲存標籤插入設定：{error}"));
+                            }
+                        }
                         for (label, tag) in [
                             ("平靜", "[calm]"), ("開心", "[happy]"),
                             ("悲傷", "[sad]"), ("低語", "[whisper]"),

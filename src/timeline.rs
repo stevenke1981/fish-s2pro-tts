@@ -211,39 +211,30 @@ impl TimelineClip {
         num_peaks: usize,
     ) -> Vec<f32> {
         if pcm.is_empty() || num_peaks == 0 {
-            return vec![0.1; num_peaks];
+            return vec![0.0; num_peaks];
         }
 
         let ch = (channels as usize).max(1);
-        let sr = sample_rate.max(8000) as f32;
+        let sr = sample_rate.max(1) as f32;
         let total_frames = pcm.len() / ch;
         let trim_start_f = ((trim_start_sec * sr) as usize).min(total_frames);
         let trim_end_f = ((trim_end_sec * sr) as usize).min(total_frames.saturating_sub(trim_start_f));
         let active_frames = total_frames.saturating_sub(trim_start_f + trim_end_f);
 
         if active_frames == 0 {
-            return vec![0.05; num_peaks];
+            return vec![0.0; num_peaks];
         }
 
-        let frames_per_bin = (active_frames / num_peaks).max(1);
         let mut peaks = Vec::with_capacity(num_peaks);
-
         for i in 0..num_peaks {
-            let start_f = trim_start_f + i * frames_per_bin;
-            let end_f = (trim_start_f + (i + 1) * frames_per_bin).min(trim_start_f + active_frames);
-            let mut max_amp: f32 = 0.0;
-
-            for f in start_f..end_f {
-                let sample = pcm[f * ch];
-                let norm = (sample.abs() as f32) / 32768.0;
-                if norm > max_amp {
-                    max_amp = norm;
-                }
-            }
-
-            peaks.push(max_amp.clamp(0.05, 1.0));
+            // Proportional boundaries cover the final frame, including uneven bins.
+            // For very short clips, repeat a frame rather than inventing silence.
+            let start = i * active_frames / num_peaks;
+            let end = ((i + 1) * active_frames / num_peaks).max(start + 1);
+            let samples = &pcm[(trim_start_f + start) * ch..(trim_start_f + end) * ch];
+            let peak = samples.iter().map(|sample| sample.unsigned_abs()).max().unwrap_or(0);
+            peaks.push(peak as f32 / 32768.0);
         }
-
         peaks
     }
 
