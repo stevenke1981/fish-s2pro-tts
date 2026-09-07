@@ -1094,7 +1094,7 @@ pub fn render_timeline_page(
         .corner_radius(8)
         .inner_margin(10.0)
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 // 時間碼顯示 (Timecode badge with frames at 30fps)
                 let mins = (state.playhead_sec / 60.0).floor() as u32;
                 let secs = (state.playhead_sec % 60.0).floor() as u32;
@@ -1176,7 +1176,8 @@ pub fn render_timeline_page(
                     state.zoom_px_per_sec = (state.zoom_px_per_sec + 15.0).min(220.0);
                 }
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            });
+            ui.horizontal_wrapped(|ui| {
                     // 另存混音檔案
                     if ui.button("💾 另存混音...").clicked() {
                         let default_name = format!("timeline_mix_{}.wav", Local::now().format("%Y%m%d_%H%M%S"));
@@ -1269,11 +1270,12 @@ pub fn render_timeline_page(
                         state.load_demo_project();
                     }
                 });
-            });
+
         });
 
     ui.add_space(8.0);
 
+    ui.label("拖曳片段中央調整出現時間／跨軌移動；拖曳兩端修剪。按住 Shift 以 0.1 秒對齊。");
     // 2. 主時間軸畫布 (Ruler + Multi-Track Canvas)
     let total_dur = state.total_timeline_duration();
     let zoom = state.zoom_px_per_sec;
@@ -1284,9 +1286,12 @@ pub fn render_timeline_page(
         .corner_radius(6)
         .inner_margin(0.0)
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
+            egui::ScrollArea::vertical().id_salt("timeline_tracks").max_height((ui.available_height() - 180.0).max(220.0)).auto_shrink([false, true]).show(ui, |ui| {
+            ui.horizontal_top(|ui| {
                 // 左側：軌道控制面板 (Track Headers)
-                ui.allocate_ui(Vec2::new(track_header_width, ui.available_height().min(380.0)), |ui| {
+                ui.allocate_ui_with_layout(Vec2::new(track_header_width, 32.0 + state.tracks.iter().map(|t| t.height + 4.0).sum::<f32>()), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    ui.spacing_mut().slider_width = 70.0;
                     // 標頭頂部對齊標尺高度
                     ui.allocate_ui(Vec2::new(track_header_width, 28.0), |ui| {
                         ui.horizontal(|ui| {
@@ -1298,18 +1303,20 @@ pub fn render_timeline_page(
                             });
                         });
                     });
-                    ui.separator();
+                    ui.add_space(4.0);
 
                     for track in &mut state.tracks {
                         ui.allocate_ui(Vec2::new(track_header_width, track.height), |ui| {
+                            ui.set_min_size(Vec2::new(track_header_width, track.height));
                             egui::Frame::NONE
-                                .fill(Color32::from_rgb(31, 41, 55))
+                                .fill(ui.visuals().extreme_bg_color)
                                 .inner_margin(6.0)
                                 .corner_radius(4)
                                 .show(ui, |ui| {
+                                    ui.set_width(track_header_width - 12.0);
                                     ui.horizontal(|ui| {
                                         ui.label(RichText::new(track.track_type.icon()).size(14.0));
-                                        ui.label(RichText::new(&track.name).size(12.0).strong());
+                                        ui.add(egui::Label::new(RichText::new(&track.name).size(12.0).strong()).truncate()).on_hover_text(&track.name);
                                     });
 
                                     ui.horizontal(|ui| {
@@ -1335,10 +1342,11 @@ pub fn render_timeline_page(
                     }
                 });
 
-                ui.separator();
-
                 // 右側：水平滾動時間標尺與多軌道畫布
                 egui::ScrollArea::horizontal()
+                    .id_salt("timeline_time")
+                    .max_height(32.0 + state.tracks.iter().map(|t| t.height + 4.0).sum::<f32>())
+                    .drag_to_scroll(false)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         let total_tracks_height: f32 = state.tracks.iter().map(|t| t.height + 4.0).sum();
@@ -1361,7 +1369,7 @@ pub fn render_timeline_page(
 
                         // 刻度與時間數字
                         let tick_interval_sec = if zoom > 120.0 { 1.0 } else if zoom > 60.0 { 2.0 } else { 5.0 };
-                        let total_ticks = (total_dur / tick_interval_sec).ceil() as usize + 5;
+                        let total_ticks = (timeline_width / zoom / tick_interval_sec).ceil() as usize;
 
                         for i in 0..=total_ticks {
                             let sec = i as f32 * tick_interval_sec;
@@ -1539,7 +1547,7 @@ pub fn render_timeline_page(
 
                         // 1. 滑鼠按下或點擊開始瞬間
                         if (response.drag_started() || (response.clicked() && state.drag_mode == DragMode::None))
-                            && let Some(pos) = pointer_pos
+                            && let Some(pos) = ui.input(|i| i.pointer.press_origin()).or(pointer_pos)
                         {
                             if ruler_rect.contains(pos) {
                                 // 點擊或拖曳標尺：Seek 播放頭並進入 Scrub 模式
@@ -1627,7 +1635,8 @@ pub fn render_timeline_page(
                                             .unwrap_or(initial_track_id);
 
                                         if let Some(c) = state.clips.iter_mut().find(|c| c.id == clip_id) {
-                                            c.start_sec = (initial_start_sec + delta_sec).max(0.0);
+                                            let start = (initial_start_sec + delta_sec).max(0.0);
+                                            c.start_sec = if ui.input(|i| i.modifiers.shift) { (start * 10.0).round() / 10.0 } else { start };
                                             c.track_id = new_track_id;
                                         }
                                     }
@@ -1718,6 +1727,7 @@ pub fn render_timeline_page(
                             Stroke::new(2.0, ph_color),
                         );
                     });
+            });
             });
         });
 

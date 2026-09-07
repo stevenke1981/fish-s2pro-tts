@@ -903,8 +903,8 @@ impl eframe::App for FishTtsApp {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.add_space(8.0);
 
-                    ui.heading("2 · 聲音設定");
-                    ui.label("選擇角色與語速；進階設定可稍後調整。");
+                    ui.heading("連線與輸出設定");
+                    ui.label("角色聲線請在右側台詞上方選擇。");
                     ui.add_space(8.0);
                     egui::CollapsingHeader::new("連線設定 · OpenRouter")
                         .default_open(self.config.api_key.trim().is_empty())
@@ -1053,92 +1053,6 @@ impl eframe::App for FishTtsApp {
                                     self.config.custom_model = self.custom_model_input.clone();
                                     let _ = self.config.save();
                                 }
-                            }
-                        });
-
-                    ui.add_space(10.0);
-
-                    // 3. 角色與音色設定卡片
-                    egui::Frame::group(ui.style())
-                        .corner_radius(8)
-                        .inner_margin(12.0)
-                        .show(ui, |ui| {
-                            ui.strong("🎭 角色聲線預設");
-                            ui.add_space(4.0);
-
-                            let current_name = self
-                                .characters
-                                .get(self.selected_character_idx)
-                                .map(|c| c.name.as_str())
-                                .unwrap_or("未選擇");
-
-                            egui::ComboBox::from_label("選擇角色")
-                                .selected_text(current_name)
-                                .show_ui(ui, |ui| {
-                                    for (idx, char_item) in self.characters.iter().enumerate() {
-                                        if ui
-                                            .selectable_value(
-                                                &mut self.selected_character_idx,
-                                                idx,
-                                                &char_item.name,
-                                            )
-                                            .clicked()
-                                        {
-                                            self.speed = char_item.recommended_speed;
-                                            self.config.selected_character_index = idx;
-                                            self.config.speed = self.speed;
-                                            let _ = self.config.save();
-                                        }
-                                    }
-                                });
-
-                            if let Some(char_item) = self.characters.get(self.selected_character_idx).cloned() {
-                                ui.add_space(4.0);
-                                ui.label(
-                                    RichText::new(&char_item.description)
-                                        .color(Color32::from_rgb(156, 163, 175))
-                                        .size(11.5),
-                                );
-                                ui.add_space(2.0);
-                                ui.label(
-                                    RichText::new(format!("聲線標籤: {}", char_item.prompt_tag))
-                                        .color(Color32::from_rgb(99, 102, 241))
-                                        .size(11.5),
-                                );
-
-                                ui.add_space(4.0);
-                                ui.horizontal(|ui| {
-                                    if ui
-                                        .checkbox(&mut self.auto_apply_character_tag, "自動在台詞套用聲線標籤")
-                                        .changed()
-                                    {
-                                        self.config.auto_apply_character_tag = self.auto_apply_character_tag;
-                                        let _ = self.config.save();
-                                    }
-                                });
-
-                                ui.add_space(2.0);
-                                if ui.button("➕ 插入角色標籤至台詞").clicked() {
-                                    let tag = char_item.prompt_tag.clone();
-                                    self.insert_tone_tag(&tag);
-                                }
-                            }
-
-                            ui.add_space(8.0);
-                            ui.separator();
-                            ui.add_space(4.0);
-
-                            ui.strong("自訂 Fish Audio Voice ID");
-                            ui.label(
-                                RichText::new("可選，填入 fish.audio 已建立聲音模型的 reference ID")
-                                    .size(11.0)
-                                    .color(Color32::from_rgb(156, 163, 175)),
-                            );
-                            let voice_input = egui::TextEdit::singleline(&mut self.custom_voice_id_input)
-                                .hint_text("例如: 7f8a9b0c...");
-                            if ui.add(voice_input).changed() {
-                                self.config.custom_voice_id = self.custom_voice_id_input.clone();
-                                let _ = self.config.save();
                             }
                         });
 
@@ -1385,11 +1299,101 @@ impl FishTtsApp {
             }
 
             ui.heading("讓文字成為聲音");
-            ui.label("1 寫台詞　→　2 選擇左側聲音　→　3 產生、試聽與匯出");
+            ui.label("1 寫台詞　→　2 選擇上方聲音　→　3 產生、試聽與匯出");
             if self.config.api_key.trim().is_empty() {
                 ui.label("開始前，請在左側「連線設定」填入 OpenRouter API Key。");
             }
             ui.add_space(12.0);
+                    // 3. 角色與音色設定卡片
+                    egui::Frame::group(ui.style())
+                        .corner_radius(8)
+                        .inner_margin(12.0)
+                        .show(ui, |ui| {
+                            ui.columns(2, |columns| {
+                            let ui = &mut columns[0];
+                            ui.strong("2 · 角色聲線預設");
+                            ui.add_space(4.0);
+
+                            let current_name = self
+                                .characters
+                                .get(self.selected_character_idx)
+                                .map(|c| c.name.as_str())
+                                .unwrap_or("未選擇");
+
+                            egui::ComboBox::from_label("選擇角色")
+                                .selected_text(current_name)
+                                .show_ui(ui, |ui| {
+                                    for (idx, char_item) in self.characters.iter().enumerate() {
+                                        if ui
+                                            .selectable_value(
+                                                &mut self.selected_character_idx,
+                                                idx,
+                                                &char_item.name,
+                                            )
+                                            .clicked()
+                                        {
+                                            self.speed = char_item.recommended_speed;
+                                            self.config.selected_character_index = idx;
+                                            self.config.speed = self.speed;
+                                            let _ = self.config.save();
+                                        }
+                                    }
+                                });
+
+                            if let Some(char_item) = self.characters.get(self.selected_character_idx).cloned() {
+                                ui.add_space(4.0);
+                                ui.label(
+                                    RichText::new(&char_item.description)
+                                        .color(Color32::from_rgb(156, 163, 175))
+                                        .size(11.5),
+                                );
+                                ui.add_space(2.0);
+                                ui.label(
+                                    RichText::new(format!("聲線標籤: {}", char_item.prompt_tag))
+                                        .color(Color32::from_rgb(99, 102, 241))
+                                        .size(11.5),
+                                );
+
+                                ui.add_space(4.0);
+                                ui.horizontal(|ui| {
+                                    if ui
+                                        .checkbox(&mut self.auto_apply_character_tag, "自動在台詞套用聲線標籤")
+                                        .changed()
+                                    {
+                                        self.config.auto_apply_character_tag = self.auto_apply_character_tag;
+                                        let _ = self.config.save();
+                                    }
+                                });
+
+                                ui.add_space(2.0);
+                                if ui.button("➕ 插入角色標籤至台詞").clicked() {
+                                    let tag = char_item.prompt_tag.clone();
+                                    self.insert_tone_tag(&tag);
+                                }
+                            }
+
+                            ui.add_space(8.0);
+                            ui.separator();
+                            ui.add_space(4.0);
+
+                            let ui = &mut columns[1];
+                            ui.strong("自訂 Fish Audio Voice ID");
+                            ui.label(
+                                RichText::new("可選，填入 fish.audio 已建立聲音模型的 reference ID")
+                                    .size(11.0)
+                                    .color(Color32::from_rgb(156, 163, 175)),
+                            );
+                            let voice_input = egui::TextEdit::singleline(&mut self.custom_voice_id_input)
+                                .hint_text("例如: 7f8a9b0c...");
+                            if ui.add(voice_input).changed() {
+                                self.config.custom_voice_id = self.custom_voice_id_input.clone();
+                                let _ = self.config.save();
+                            }
+                            });
+                        });
+
+                    ui.add_space(10.0);
+
             // 2. 台詞編輯區
             egui::Frame::group(ui.style())
                 .corner_radius(8)
@@ -1468,7 +1472,22 @@ impl FishTtsApp {
                             if let Some(text) = self.previous_text.take() { self.input_text = text; }
                         }
                     });
-                    let multiline = egui::TextEdit::multiline(&mut self.input_text)
+                    ui.horizontal_wrapped(|ui| {
+                        ui.strong("快捷標籤");
+                        ui.selectable_value(&mut self.tag_insert_mode, TagInsertMode::Prepend, "插入開頭");
+                        ui.selectable_value(&mut self.tag_insert_mode, TagInsertMode::Append, "追加末尾");
+                        for (label, tag) in [
+                            ("平靜", "[calm]"), ("開心", "[happy]"),
+                            ("悲傷", "[sad]"), ("低語", "[whisper]"),
+                            ("激動", "[excited]"), ("停頓", "[pause]"),
+                            ("嘆氣", "[sigh]"), ("清唱（實驗）", "[singing] [a cappella, unaccompanied solo voice]"),
+                        ] {
+                            if ui.small_button(label).on_hover_text(tag).clicked() {
+                                self.insert_tone_tag(tag);
+                            }
+                        }
+                    });
+                    ui.weak("清唱為語氣提示，建議插入歌詞開頭；無法指定旋律或保證音準。");                    let multiline = egui::TextEdit::multiline(&mut self.input_text)
                         .desired_rows(12)
                         .desired_width(f32::INFINITY)
                         .hint_text("貼上你想朗讀的文字。需要情緒變化時，可展開下方「加入情緒與語氣」。");
