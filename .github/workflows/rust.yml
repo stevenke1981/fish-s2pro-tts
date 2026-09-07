@@ -8,6 +8,7 @@ permissions:
 jobs:
   test:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
@@ -19,3 +20,25 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev pkg-config libssl-dev
       - run: cargo test --locked
       - run: cargo build --locked
+  headless:
+    name: Headless CLI and MCP (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test without GUI or audio-device dependencies
+        run: cargo test --locked --no-default-features
+      - name: Build standalone agent executable
+        run: cargo build --locked --no-default-features --bin fish-s2pro-tts-cli
+      - name: Upload CI agent executable (debug build)
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-cli-debug-${{ matrix.os }}
+          path: |
+            target/debug/fish-s2pro-tts-cli
+            target/debug/fish-s2pro-tts-cli.exe
+          if-no-files-found: error

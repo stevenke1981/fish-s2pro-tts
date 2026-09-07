@@ -2,13 +2,35 @@
 name = "fish-s2pro-tts"
 version = "0.1.0"
 edition = "2024"
+default-run = "fish-s2pro-tts"
+
+[features]
+default = ["gui"]
+gui = ["dep:eframe", "dep:egui", "dep:rodio", "dep:rfd"]
+
+[[bin]]
+name = "fish-s2pro-tts"
+path = "src/main.rs"
+required-features = ["gui"]
+
+[[bin]]
+name = "fish-s2pro-tts-cli"
+path = "src/bin/fish-s2pro-tts-cli.rs"
+
+[[test]]
+name = "integration_tests"
+required-features = ["gui"]
+
+[[test]]
+name = "timeline_ui"
+required-features = ["gui"]
 
 [dependencies]
-eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
-egui = "0.31"
+eframe = { version = "0.31", optional = true, default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+egui = { version = "0.31", optional = true }
 reqwest = { version = "0.12", features = ["json", "blocking"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-rodio = { version = "0.20", default-features = true }
+rodio = { version = "0.20", optional = true, default-features = true }
 chrono = "0.4"
-rfd = "0.15"
+rfd = { version = "0.15", optional = true }

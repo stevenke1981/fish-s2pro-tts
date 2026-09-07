@@ -1,10 +1,20 @@
+pub mod agent;
 pub mod api;
-pub mod app;
-pub mod audio;
+pub mod cli;
 pub mod config;
-pub mod file_manager;
-pub mod fonts;
+pub mod mcp;
 pub mod models;
-pub mod multi_speech;
 pub mod storytelling;
+
+#[cfg(feature = "gui")]
+pub mod app;
+#[cfg(feature = "gui")]
+pub mod audio;
+#[cfg(feature = "gui")]
+pub mod file_manager;
+#[cfg(feature = "gui")]
+pub mod fonts;
+#[cfg(feature = "gui")]
+pub mod multi_speech;
+#[cfg(feature = "gui")]
 pub mod timeline;
