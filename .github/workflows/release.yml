@@ -40,6 +40,10 @@ jobs:
         run: cargo test --locked
       - name: Build optimized executable
         run: cargo build --release --locked
+      - name: Test standalone CLI and MCP
+        run: cargo test --locked --no-default-features
+      - name: Build standalone CLI and MCP
+        run: cargo build --release --locked --no-default-features --bin fish-s2pro-tts-cli
       - name: Package executable and instructions
         shell: python {0}
         env:
@@ -60,6 +64,9 @@ jobs:
           if not source.is_file():
               raise SystemExit("Expected executable is missing: " + str(source))
           shutil.copy2(source, root / source.name)
+          cli_name = "fish-s2pro-tts-cli" + (".exe" if os.environ["PLATFORM"].startswith("windows") else "")
+          shutil.copy2(pathlib.Path("target/release") / cli_name, root / cli_name)
+          shutil.copy2("docs/agent-cli-mcp.md", root / "AGENT-CLI-MCP.md")
           shutil.copy2("README.md", root / "README.md")
           (root / "BUILD.txt").write_text(
               "Commit: " + os.environ["GITHUB_SHA"] + "\n"
@@ -78,6 +85,7 @@ jobs:
               )
               launcher.chmod(0o755)
               (root / source.name).chmod(0o755)
+              (root / cli_name).chmod(0o755)
           dist = pathlib.Path("dist")
           dist.mkdir()
           if os.environ["PLATFORM"].startswith("windows"):
@@ -149,7 +157,7 @@ jobs:
             echo "Linux: extract the tar.gz and run ./start.sh in a desktop session."
             echo "Linux requires compatible system libraries (built on Ubuntu 22.04)."
             echo
-            echo "Packages contain BUILD.txt; SHA-256 checksum files are attached."
+            echo "Packages include the standalone CLI/MCP executable, AGENT-CLI-MCP.md and BUILD.txt; SHA-256 checksum files are attached."
             echo "Timeline project save/reopen is not implemented. Export WAV before closing."
             echo "These binaries are not code-signed; live TTS and audio-device testing remain manual."
           } > release-notes.md

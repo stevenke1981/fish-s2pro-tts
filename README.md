@@ -257,3 +257,7 @@ git push origin v0.1.0
 ```
 
 版本號僅為示例，請使用尚未存在、且與發布內容相符的標籤。兩個平台的建置都成功後才會發布 Release；任何一個平台失敗，都不會更新公開的 Preview。
+
+## Agent CLI 與 MCP
+
+提供不需 GUI 的 CLI 與 MCP stdio 工具，可預覽台詞、批次生成並查詢工作進度。下載包會包含獨立 CLI 執行檔；詳見 [使用說明](docs/agent-cli-mcp.md)。
