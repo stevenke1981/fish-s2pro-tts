@@ -409,6 +409,16 @@ impl FishTtsApp {
         });
     }
 
+    /// 與 GUI 預覽共用同一套 Voice ID 驗證及優先順序，不呼叫 API。
+    fn selected_voice_id(&self) -> Result<Option<String>, String> {
+        let character = self.characters.get(self.selected_character_idx)
+            .or_else(|| self.characters.first());
+        crate::voice_id::resolve_voice_id(
+            &self.custom_voice_id_input,
+            character.and_then(|c| c.voice_id.as_deref()),
+        ).map(|selection| selection.id)
+    }
+
     /// 觸發非同步語音生成
     fn start_generation(&mut self) {
         if self.timeline.is_busy() || self.is_generating || self.multi_speech.is_generating || self.multi_speech.preview_line_id.is_some() {
@@ -435,11 +445,13 @@ impl FishTtsApp {
         // 自動套用角色聲線提示詞 (若有啟用且未手動包含)
         let final_input = format_speech_input(&raw_input, &character, self.auto_apply_character_tag);
 
-        // 決定使用自訂 Voice ID 或角色預設 Voice ID (若為 None 則不傳遞 voice 欄位，避免無效 ID 報錯)
-        let voice_id = if !self.custom_voice_id_input.trim().is_empty() {
-            Some(self.custom_voice_id_input.trim().to_string())
-        } else {
-            character.voice_id.clone()
+        // 驗證手動 ID；錯誤時停止，不偷偷改用其他聲音或發送 API 請求。
+        let voice_id = match self.selected_voice_id() {
+            Ok(voice) => voice,
+            Err(error) => {
+                self.last_error = Some(error);
+                return;
+            }
         };
 
         // 決定模型
@@ -1057,7 +1069,6 @@ impl eframe::App for FishTtsApp {
                         });
 
                     ui.add_space(10.0);
-
                     // 4. 音訊產生參數
                     egui::Frame::group(ui.style())
                         .corner_radius(8)
@@ -1377,17 +1388,24 @@ impl FishTtsApp {
                             ui.add_space(4.0);
 
                             let ui = &mut columns[1];
-                            ui.strong("自訂 Fish Audio Voice ID");
-                            ui.label(
-                                RichText::new("可選，填入 fish.audio 已建立聲音模型的 reference ID")
-                                    .size(11.0)
-                                    .color(Color32::from_rgb(156, 163, 175)),
-                            );
-                            let voice_input = egui::TextEdit::singleline(&mut self.custom_voice_id_input)
-                                .hint_text("例如: 7f8a9b0c...");
-                            if ui.add(voice_input).changed() {
-                                self.config.custom_voice_id = self.custom_voice_id_input.clone();
-                                let _ = self.config.save();
+                            let character_voice = self.characters.get(self.selected_character_idx)
+                                .or_else(|| self.characters.first())
+                                .and_then(|c| c.voice_id.clone());
+                            if let Some(notice) = crate::voice_id::render_editor(
+                                ui, &mut self.custom_voice_id_input, &mut self.config,
+                                character_voice.as_deref(),
+                            ) {
+                                match notice {
+                                    Ok(message) => {
+                                        self.status_message = message.clone();
+                                        self.success_toast = Some((message, Instant::now()));
+                                        self.last_error = None;
+                                    }
+                                    Err(error) => {
+                                        self.success_toast = None;
+                                        self.last_error = Some(error);
+                                    }
+                                }
                             }
                             });
                         });
@@ -1669,7 +1687,7 @@ impl FishTtsApp {
                             .min_size(Vec2::new(240.0, 42.0))
                             .corner_radius(6);
 
-                        if ui.add_enabled(!self.timeline.is_busy() && !self.is_generating && !self.multi_speech.is_generating && self.multi_speech.preview_line_id.is_none() && !self.config.api_key.trim().is_empty() && !self.input_text.trim().is_empty(), gen_btn).clicked() {
+                        if ui.add_enabled(!self.timeline.is_busy() && !self.is_generating && !self.multi_speech.is_generating && self.multi_speech.preview_line_id.is_none() && !self.config.api_key.trim().is_empty() && !self.input_text.trim().is_empty() && self.selected_voice_id().is_ok(), gen_btn).clicked() {
                             self.start_generation();
                         }
 
@@ -1797,6 +1815,29 @@ impl FishTtsApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn single_gui_uses_the_manual_voice_instead_of_character_default() {
+        let mut app = FishTtsApp::new_headless();
+        app.selected_character_idx = 0;
+        app.characters[0].voice_id = Some("character-voice".into());
+        app.custom_voice_id_input = "  manual-voice  ".into();
+        assert_eq!(app.selected_voice_id().unwrap().as_deref(), Some("manual-voice"));
+        app.custom_voice_id_input.clear();
+        assert_eq!(app.selected_voice_id().unwrap().as_deref(), Some("character-voice"));
+        app.characters[0].voice_id = None;
+        assert_eq!(app.selected_voice_id().unwrap(), None);
+    }
+
+    #[test]
+    fn single_gui_rejects_invalid_manual_voice_without_fallback() {
+        let mut app = FishTtsApp::new_headless();
+        app.selected_character_idx = 0;
+        app.characters[0].voice_id = Some("valid-preset".into());
+        app.custom_voice_id_input = "https://fish.audio/m/not-an-id".into();
+        assert!(app.selected_voice_id().is_err());
+        assert!(!app.is_generating);
+    }
 
     #[test]
     fn timeline_transfer_uses_generated_single_snapshot_not_shared_playback() {

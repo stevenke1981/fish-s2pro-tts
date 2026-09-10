@@ -5,6 +5,7 @@ pub mod config;
 pub mod mcp;
 pub mod models;
 pub mod storytelling;
+pub mod voice_id;
 
 #[cfg(feature = "gui")]
 pub mod app;
